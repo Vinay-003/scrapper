@@ -45,6 +45,7 @@ python3 arenascans.py --url https://arenascan.com/manga/some-manga/ --chapter-wo
 - Increase to 6-8 if you don't get 429 errors
 - Decrease to 2 if you encounter rate limiting
 - Ban detection will automatically pause if IP is blocked
+- Obviously use a VPN 
 
 ## Output
 
