@@ -26,6 +26,13 @@
       "expo-status-bar",
       "expo-font",
       "expo-splash-screen"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "0daa7804-fb95-436b-9025-628c3ea27140"
+      }
+    },
+    "owner": "vinaysaini003"
   }
 }
