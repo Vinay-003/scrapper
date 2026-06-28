@@ -88,6 +88,11 @@ async def root():
     return FileResponse(str(BASE_DIR / "static" / "index.html"))
 
 
+@app.get("/scraper.html")
+async def scraper_page():
+    return FileResponse(str(BASE_DIR / "static" / "scraper.html"))
+
+
 @app.get("/api/manga")
 async def list_manga(path: Optional[str] = None):
     base = Path(path) if path else BASE_DIR
