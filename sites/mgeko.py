@@ -117,7 +117,6 @@ class MgekoAdapter(BaseSiteAdapter):
         # Find the chapter reader container
         reader = soup.find('div', id='chapter-reader')
         if not reader:
-            # Fallback: find all img tags in the page
             reader = soup
         
         for img in reader.find_all('img'):
@@ -128,13 +127,11 @@ class MgekoAdapter(BaseSiteAdapter):
             src = normalize_url(src, f"https://{self.domain}")
             
             # Skip credits/watermark images
-            if 'credits' in src.lower() or 'mgeko' in src.lower() and 'credits' in src.lower():
-                continue
             if imgsrv4_url_is_credits(src):
                 continue
             
-            # Only include actual manga page images
-            if 'imgsrv4.com' in src or '/sv2/' in src or '/comic/' in src:
+            # Only include actual manga page images (imgsrv4.com CDN)
+            if 'imgsrv4.com' in src:
                 images.append(src)
         
         return images
@@ -216,15 +213,8 @@ class MgekoAdapter(BaseSiteAdapter):
 
 
 def imgsrv4_url_is_credits(url: str) -> bool:
-    """Check if an imgsrv4.com URL is a credits/watermark image"""
-    # Credits images are typically: credits-mgeko.png, credits.png, etc.
-    # Page images follow: /sv2/comic/{manga}/chapter-{N}/{page}.jpg
-    if 'imgsrv4.com' in url:
-        # If it doesn't match the manga page pattern, it's likely a credits image
-        if '/sv2/comic/' not in url:
-            return True
-        # Explicit credits filenames
-        lower = url.lower()
-        if 'credits' in lower or 'watermark' in lower or 'logo' in lower:
-            return True
+    """Check if an imgsrv4.com URL is a credits/watermark image."""
+    lower = url.lower()
+    if 'credits' in lower or 'watermark' in lower or 'logo' in lower:
+        return True
     return False
