@@ -5,7 +5,10 @@ from pathlib import Path
 import json
 import zipfile
 import re
+import asyncio
+import uuid
 from typing import Optional
+from datetime import datetime
 
 app = FastAPI(title="Manga Reader")
 
@@ -188,6 +191,161 @@ async def add_comment(slug: str, data: dict):
         comments[slug] = []
     comments[slug].append(data)
     save_json(COMMENTS_FILE, comments)
+    return {"ok": True}
+
+
+# ──────────────────────────────────────────────
+# SCRAPER JOBS
+# ──────────────────────────────────────────────
+scraper_jobs = {}  # job_id -> job info
+
+
+@app.post("/api/scraper/start")
+async def start_scraper_job(config: dict):
+    url = config.get("url", "").strip()
+    if not url:
+        raise HTTPException(400, "URL is required")
+
+    job_id = str(uuid.uuid4())[:8]
+    job = {
+        "id": job_id,
+        "url": url,
+        "start": config.get("start"),
+        "end": config.get("end"),
+        "workers": config.get("workers", 4),
+        "chapter_workers": config.get("chapter_workers", 2),
+        "status": "starting",
+        "progress": 0,
+        "current_chapter": None,
+        "total_chapters": 0,
+        "completed_chapters": 0,
+        "failed_chapters": [],
+        "log": [],
+        "created_at": datetime.now().isoformat(),
+        "error": None,
+    }
+    scraper_jobs[job_id] = job
+
+    asyncio.create_task(run_scraper_job(job_id, job))
+
+    return {"job_id": job_id, "status": "starting"}
+
+
+async def run_scraper_job(job_id: str, job: dict):
+    try:
+        from arenascans import (
+            get_manga_url, get_manga_title, get_chapters, download_chapter,
+            BanDetector, HEADERS, REQUEST_TIMEOUT, DEFAULT_WORKERS,
+            extract_slug
+        )
+        import aiohttp
+
+        job["status"] = "fetching"
+        job["log"].append("Fetching manga info...")
+
+        try:
+            manga_url = get_manga_url(job["url"])
+        except ValueError as e:
+            job["status"] = "failed"
+            job["error"] = str(e)
+            job["log"].append(f"Error: {e}")
+            return
+
+        connector = aiohttp.TCPConnector(limit=job["workers"] * job["chapter_workers"] + 4)
+        async with aiohttp.ClientSession(connector=connector) as session:
+            manga_title = await get_manga_title(session, manga_url)
+            job["log"].append(f"Manga: {manga_title}")
+
+            chapters = await get_chapters(session, manga_url)
+            if not chapters:
+                job["status"] = "failed"
+                job["error"] = "No chapters found"
+                job["log"].append("No chapters found. Check the URL.")
+                return
+
+            nums = list(chapters.keys())
+            lo, hi = nums[0], nums[-1]
+
+            start = job["start"] if job["start"] is not None else lo
+            end = job["end"] if job["end"] is not None else hi
+
+            if start is None:
+                start = lo
+            if end is None:
+                end = hi
+
+            start = float(start)
+            end = float(end)
+
+            if start > end:
+                start, end = end, start
+
+            selected = [(ch, url) for ch, url in chapters.items() if start <= ch <= end]
+            if not selected:
+                job["status"] = "failed"
+                job["error"] = f"No chapters in range {start}–{end}"
+                job["log"].append(job["error"])
+                return
+
+            job["total_chapters"] = len(selected)
+            job["status"] = "downloading"
+            job["log"].append(f"Downloading {len(selected)} chapters...")
+
+            img_semaphore = asyncio.Semaphore(job["workers"] * job["chapter_workers"])
+            ch_semaphore = asyncio.Semaphore(job["chapter_workers"])
+
+            ban_detector = BanDetector()
+
+            for ch_num, ch_url in selected:
+                job["current_chapter"] = ch_num
+                job["log"].append(f"Chapter {ch_num}...")
+
+                try:
+                    ok = await download_chapter(
+                        session, ch_num, ch_url, manga_title,
+                        img_semaphore, ch_semaphore
+                    )
+                    if ok:
+                        job["completed_chapters"] += 1
+                        job["log"].append(f"Chapter {ch_num} done")
+                    else:
+                        job["failed_chapters"].append(ch_num)
+                        job["log"].append(f"Chapter {ch_num} partial")
+                except Exception as e:
+                    job["failed_chapters"].append(ch_num)
+                    job["log"].append(f"Chapter {ch_num} error: {e}")
+
+                job["progress"] = round(
+                    (job["completed_chapters"] + len(job["failed_chapters"])) / job["total_chapters"] * 100
+                )
+
+            job["status"] = "completed"
+            job["progress"] = 100
+            job["log"].append("Done!")
+
+    except Exception as e:
+        job["status"] = "failed"
+        job["error"] = str(e)
+        job["log"].append(f"Fatal error: {e}")
+
+
+@app.get("/api/scraper/jobs")
+async def list_scraper_jobs():
+    return {"jobs": list(scraper_jobs.values())}
+
+
+@app.get("/api/scraper/jobs/{job_id}")
+async def get_scraper_job(job_id: str):
+    if job_id not in scraper_jobs:
+        raise HTTPException(404, "Job not found")
+    return scraper_jobs[job_id]
+
+
+@app.delete("/api/scraper/jobs/{job_id}")
+async def delete_scraper_job(job_id: str):
+    if job_id not in scraper_jobs:
+        raise HTTPException(404, "Job not found")
+    del scraper_jobs[job_id]
     return {"ok": True}
 
 

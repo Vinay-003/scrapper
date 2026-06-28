@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manga Scraper</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <a href="/" class="logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                <path d="M20 17V7a2 2 0 0 0-2-2H6.5A2.5 2.5 0 0 0 4 7.5v12"/>
+            </svg>
+            <span>Manga Scraper</span>
+        </a>
+        <div class="nav-right">
+            <a href="/" class="btn btn-ghost">Reader</a>
+            <button id="theme-toggle" class="icon-btn" title="Toggle theme">
+                <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/>
+                    <line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/>
+                    <line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                </svg>
+                <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                </svg>
+            </button>
+        </div>
+    </nav>
+
+    <main class="container">
+        <h1 class="page-title">Manga Scraper</h1>
+        <p class="subtitle">Download manga from arenascan.com</p>
+
+        <!-- Config Form -->
+        <div class="scraper-config">
+            <div class="form-group">
+                <label for="scraper-url">Manga URL *</label>
+                <input type="url" id="scraper-url" placeholder="https://arenascan.com/manga/your-manga/">
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="scraper-start">Start Chapter</label>
+                    <input type="number" id="scraper-start" placeholder="Auto">
+                </div>
+                <div class="form-group">
+                    <label for="scraper-end">End Chapter</label>
+                    <input type="number" id="scraper-end" placeholder="Auto">
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="scraper-workers">Image Workers</label>
+                    <input type="number" id="scraper-workers" value="4" min="1" max="20">
+                    <span class="form-hint">Concurrent image downloads per chapter</span>
+                </div>
+                <div class="form-group">
+                    <label for="scraper-chworkers">Chapter Workers</label>
+                    <input type="number" id="scraper-chworkers" value="2" min="1" max="10">
+                    <span class="form-hint">Parallel chapter downloads</span>
+                </div>
+            </div>
+
+            <button id="start-btn" class="btn btn-primary btn-lg">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                Start Download
+            </button>
+        </div>
+
+        <!-- Jobs List -->
+        <div class="jobs-section">
+            <h2>Downloads</h2>
+            <div id="jobs-list" class="jobs-list">
+                <p class="no-jobs">No active downloads</p>
+            </div>
+        </div>
+    </main>
+
+    <div id="toast-box" class="toast-box"></div>
+
+    <script>
+    (function() {
+        const $ = (sel) => document.querySelector(sel);
+        let pollingInterval = null;
+
+        // Theme
+        let theme = localStorage.getItem("manga_theme") || "dark";
+        function setTheme(t) {
+            theme = t;
+            document.documentElement.setAttribute("data-theme", t);
+            localStorage.setItem("manga_theme", t);
+        }
+        setTheme(theme);
+        $("#theme-toggle").addEventListener("click", () => {
+            setTheme(theme === "dark" ? "light" : "dark");
+        });
+
+        function toast(msg, type) {
+            const box = $("#toast-box");
+            const el = document.createElement("div");
+            el.className = "toast " + (type || "info");
+            el.textContent = msg;
+            box.appendChild(el);
+            setTimeout(() => el.remove(), 3000);
+        }
+
+        async function api(url, opts) {
+            try {
+                const r = await fetch(url, opts);
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                return await r.json();
+            } catch (e) {
+                console.error("API error:", url, e);
+                return null;
+            }
+        }
+
+        // Start job
+        $("#start-btn").addEventListener("click", async () => {
+            const url = $("#scraper-url").value.trim();
+            if (!url) return toast("Enter a manga URL", "error");
+
+            const config = {
+                url,
+                start: $("#scraper-start").value ? parseFloat($("#scraper-start").value) : null,
+                end: $("#scraper-end").value ? parseFloat($("#scraper-end").value) : null,
+                workers: parseInt($("#scraper-workers").value) || 4,
+                chapter_workers: parseInt($("#scraper-chworkers").value) || 2,
+            };
+
+            const data = await api("/api/scraper/start", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify(config),
+            });
+
+            if (data) {
+                toast("Download started!", "success");
+                startPolling();
+            } else {
+                toast("Failed to start download", "error");
+            }
+        });
+
+        // Render jobs
+        function renderJobs(jobs) {
+            const list = $("#jobs-list");
+            if (!jobs.length) {
+                list.innerHTML = '<p class="no-jobs">No active downloads</p>';
+                return;
+            }
+
+            list.innerHTML = "";
+            jobs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+            jobs.forEach(job => {
+                const el = document.createElement("div");
+                el.className = "job-card";
+
+                const statusClass = {
+                    starting: "status-starting",
+                    fetching: "status-fetching",
+                    downloading: "status-downloading",
+                    completed: "status-completed",
+                    failed: "status-failed",
+                }[job.status] || "";
+
+                const lastLogs = job.log.slice(-5).map(l => `<div class="log-line">${esc(l)}</div>`).join("");
+
+                el.innerHTML = `
+                    <div class="job-header">
+                        <span class="job-url">${esc(job.url)}</span>
+                        <span class="job-status ${statusClass}">${job.status}</span>
+                    </div>
+                    <div class="job-progress-bar">
+                        <div class="job-progress-fill" style="width:${job.progress}%"></div>
+                    </div>
+                    <div class="job-stats">
+                        <span>${job.completed_chapters}/${job.total_chapters} chapters</span>
+                        <span>${job.progress}%</span>
+                        ${job.failed_chapters.length ? `<span class="job-failed">${job.failed_chapters.length} failed</span>` : ""}
+                    </div>
+                    <div class="job-log">${lastLogs}</div>
+                    <div class="job-actions">
+                        <button class="btn btn-ghost btn-sm job-delete" data-id="${job.id}">Remove</button>
+                        ${job.status === "completed" || job.status === "failed" ? "" : `<span class="job-cancel" data-id="${job.id}"></span>`}
+                    </div>
+                `;
+                list.appendChild(el);
+            });
+
+            list.querySelectorAll(".job-delete").forEach(btn => {
+                btn.addEventListener("click", async () => {
+                    await api(`/api/scraper/jobs/${btn.dataset.id}`, {method: "DELETE"});
+                    loadJobs();
+                });
+            });
+        }
+
+        function esc(s) {
+            const d = document.createElement("div");
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        async function loadJobs() {
+            const data = await api("/api/scraper/jobs");
+            if (data) renderJobs(data.jobs || []);
+        }
+
+        function startPolling() {
+            if (pollingInterval) return;
+            loadJobs();
+            pollingInterval = setInterval(async () => {
+                await loadJobs();
+                const data = await api("/api/scraper/jobs");
+                if (data) {
+                    const active = (data.jobs || []).filter(j => j.status === "completed" || j.status === "failed").length;
+                    if (active === (data.jobs || []).length) {
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
+                    }
+                }
+            }, 2000);
+        }
+
+        loadJobs();
+    })();
+    </script>
+</body>
+</html>
