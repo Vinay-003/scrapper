@@ -73,6 +73,13 @@ class BaseSiteAdapter(ABC):
         """
         return self.get_manga_slug(url)
     
+    def get_all_chapters_url(self, slug: str) -> Optional[str]:
+        """Get URL for a page that lists ALL chapters (not just recent ones).
+        
+        Return None if the site doesn't have such a page.
+        """
+        return None
+    
     def normalize_image_url(self, url: str) -> str:
         """Normalize/transform image URL if needed (e.g., base64 decoding)"""
         return url
