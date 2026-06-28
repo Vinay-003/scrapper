@@ -9,6 +9,8 @@
         chapters: [],
         allImages: [],
         zoom: 1,
+        recentlyRead: JSON.parse(localStorage.getItem("manga_recently_read") || "[]"),
+        wishlist: JSON.parse(localStorage.getItem("manga_wishlist") || "[]"),
     };
 
     const $ = (sel) => document.querySelector(sel);
@@ -52,6 +54,133 @@
         return d.innerHTML;
     }
 
+    // ── Recently Read ──────────────────────────────────────
+    function saveRecentlyRead(manga, chapter) {
+        const entry = {
+            manga,
+            chapter,
+            time: Date.now(),
+        };
+        // Remove existing entry for same manga
+        state.recentlyRead = state.recentlyRead.filter((r) => r.manga !== manga);
+        // Add to front
+        state.recentlyRead.unshift(entry);
+        // Keep only last 10
+        state.recentlyRead = state.recentlyRead.slice(0, 10);
+        localStorage.setItem("manga_recently_read", JSON.stringify(state.recentlyRead));
+    }
+
+    function loadRecentlyRead() {
+        const container = $("#recently-read");
+        const list = $("#recent-list");
+        if (!container || !list) return;
+
+        if (state.recentlyRead.length === 0) {
+            container.style.display = "none";
+            return;
+        }
+
+        container.style.display = "block";
+        list.innerHTML = "";
+
+        state.recentlyRead.forEach((entry) => {
+            const card = document.createElement("div");
+            card.className = "recent-card";
+            const timeAgo = getTimeAgo(entry.time);
+            card.innerHTML =
+                '<div class="recent-card-title">' + esc(entry.manga.replace(/-/g, " ")) + "</div>" +
+                '<div class="recent-card-chapter">Chapter ' + entry.chapter + "</div>" +
+                '<div class="recent-card-time">' + timeAgo + "</div>";
+            card.addEventListener("click", () => navigateTo("reader", entry.manga, entry.chapter));
+            list.appendChild(card);
+        });
+    }
+
+    function getTimeAgo(timestamp) {
+        const seconds = Math.floor((Date.now() - timestamp) / 1000);
+        if (seconds < 60) return "Just now";
+        if (seconds < 3600) return Math.floor(seconds / 60) + "m ago";
+        if (seconds < 86400) return Math.floor(seconds / 3600) + "h ago";
+        return Math.floor(seconds / 86400) + "d ago";
+    }
+
+    // ── Delete Manga/Chapter ───────────────────────────────
+    async function deleteManga(slug) {
+        if (!confirm("Delete all chapters for " + slug.replace(/-/g, " ") + "?")) return;
+        const base = state.basePath || "";
+        const data = await api("/api/manga/" + encodeURIComponent(slug) + "/delete" + (base ? "?path=" + encodeURIComponent(base) : ""), { method: "DELETE" });
+        if (data && data.ok) {
+            toast("Deleted", "success");
+            loadMangaList();
+        } else {
+            toast("Delete failed", "error");
+        }
+    }
+
+    async function deleteChapter(mangaSlug, chapterNum) {
+        if (!confirm("Delete chapter " + chapterNum + "?")) return;
+        const base = state.basePath || "";
+        const data = await api("/api/manga/" + encodeURIComponent(mangaSlug) + "/chapter/" + chapterNum + "/delete" + (base ? "?path=" + encodeURIComponent(base) : ""), { method: "DELETE" });
+        if (data && data.ok) {
+            toast("Chapter deleted", "success");
+            openManga(mangaSlug);
+        } else {
+            toast("Delete failed", "error");
+        }
+    }
+
+    // ── Wishlist ───────────────────────────────────────────
+    function addToWishlist(title, url) {
+        const entry = { title, url, added: Date.now() };
+        if (!state.wishlist.find((w) => w.url === url)) {
+            state.wishlist.push(entry);
+            localStorage.setItem("manga_wishlist", JSON.stringify(state.wishlist));
+            toast("Added to wishlist", "success");
+        }
+    }
+
+    function removeFromWishlist(url) {
+        state.wishlist = state.wishlist.filter((w) => w.url !== url);
+        localStorage.setItem("manga_wishlist", JSON.stringify(state.wishlist));
+        loadWishlist();
+    }
+
+    function loadWishlist() {
+        const list = $("#wishlist-list");
+        if (!list) return;
+
+        list.innerHTML = "";
+        state.wishlist.forEach((entry) => {
+            const card = document.createElement("div");
+            card.className = "wishlist-card";
+            card.innerHTML =
+                '<div class="wishlist-card-info">' +
+                '<div class="wishlist-card-title">' + esc(entry.title) + "</div>" +
+                '<div class="wishlist-card-url">' + esc(entry.url) + "</div>" +
+                "</div>" +
+                '<div class="wishlist-card-actions">' +
+                '<button class="btn btn-primary btn-sm scrape-btn" data-url="' + esc(entry.url) + '">Scrape</button>' +
+                '<button class="delete-btn remove-btn" data-url="' + esc(entry.url) + '">Remove</button>' +
+                "</div>";
+            list.appendChild(card);
+        });
+
+        // Add event listeners
+        list.querySelectorAll(".scrape-btn").forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                window.location.href = "/scraper.html?url=" + encodeURIComponent(btn.dataset.url);
+            });
+        });
+
+        list.querySelectorAll(".remove-btn").forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                removeFromWishlist(btn.dataset.url);
+            });
+        });
+    }
+
     // ── Hash routing (survives refresh) ─────────────────────
     function navigateTo(page, a, b) {
         if (page === "detail") window.location.hash = "#/detail/" + encodeURIComponent(a);
@@ -72,6 +201,7 @@
         } else {
             showPage("home");
             loadMangaList();
+            loadRecentlyRead();
         }
     }
 
@@ -125,28 +255,6 @@
     });
 
     // ── Sites Grid ─────────────────────────────────────────
-    async function loadSites() {
-        const grid = $("#sites-grid");
-        if (!grid) return;
-        
-        const data = await api("/api/sites");
-        if (!data || !data.sites) return;
-        
-        grid.innerHTML = "";
-        data.sites.forEach((site) => {
-            const card = document.createElement("div");
-            card.className = "site-card";
-            card.innerHTML =
-                '<div class="site-card-name">' + esc(site.name) + "</div>" +
-                '<div class="site-card-domain">' + esc(site.domain) + "</div>" +
-                '<span class="site-card-status working">Available</span>';
-            card.addEventListener("click", () => {
-                window.location.href = "/scraper.html?site=" + encodeURIComponent(site.domain);
-            });
-            grid.appendChild(card);
-        });
-    }
-
     // ── Manga Detail ───────────────────────────────────────
     async function loadChaptersFor(slug) {
         const base = state.basePath || "";
@@ -175,6 +283,17 @@
             contBtn.style.display = "none";
         }
 
+        // Add delete manga button
+        let deleteBtn = $("#delete-manga-btn");
+        if (!deleteBtn) {
+            deleteBtn = document.createElement("button");
+            deleteBtn.id = "delete-manga-btn";
+            deleteBtn.className = "delete-btn";
+            deleteBtn.textContent = "Delete Manga";
+            $("#detail-chapters").parentNode.insertBefore(deleteBtn, $("#detail-chapters").nextSibling);
+        }
+        deleteBtn.onclick = () => deleteManga(slug);
+
         renderChapters(state.chapters);
         renderComments(data.comments || []);
         showPage("detail");
@@ -191,9 +310,22 @@
                 '<div class="chapter-info">' +
                 '<div class="chapter-name">Chapter ' + ch.number + "</div>" +
                 '<div class="chapter-meta">' + ch.file + "</div>" +
-                "</div>";
-            el.addEventListener("click", () => navigateTo("reader", state.currentManga, ch.number));
+                "</div>" +
+                '<button class="delete-btn chapter-delete-btn" data-num="' + ch.number + '">Delete</button>';
+            el.addEventListener("click", (e) => {
+                if (!e.target.classList.contains("chapter-delete-btn")) {
+                    navigateTo("reader", state.currentManga, ch.number);
+                }
+            });
             list.appendChild(el);
+        });
+
+        // Add delete event listeners
+        list.querySelectorAll(".chapter-delete-btn").forEach((btn) => {
+            btn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                deleteChapter(state.currentManga, parseFloat(btn.dataset.num));
+            });
         });
     }
 
@@ -290,6 +422,9 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ last_chapter: chapterNum }),
         });
+
+        // Save to recently read
+        saveRecentlyRead(state.currentManga, chapterNum);
 
         $("#reader-chapter-label").textContent = "Chapter " + chapterNum;
         state.zoom = 1;
@@ -396,7 +531,6 @@
     // ── Init ───────────────────────────────────────────────
     setTheme(state.theme);
     $("#path-input").value = state.basePath;
-    loadSites();
 
     // Listen for hash changes (back/forward/refresh)
     window.addEventListener("hashchange", handleHash);

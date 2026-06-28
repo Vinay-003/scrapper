@@ -89,6 +89,18 @@
                 <p class="no-jobs">No active downloads</p>
             </div>
         </div>
+
+        <!-- Wishlist -->
+        <div class="wishlist-section">
+            <h2>Wishlist</h2>
+            <p class="subtitle">Manga you want to scrape later</p>
+            <div class="wishlist-form">
+                <input type="text" id="wishlist-title" placeholder="Manga title">
+                <input type="url" id="wishlist-url" placeholder="https://...">
+                <button id="wishlist-add-btn" class="btn btn-primary">Add</button>
+            </div>
+            <div id="wishlist-list" class="wishlist-list"></div>
+        </div>
     </main>
 
     <div id="toast-box" class="toast-box"></div>
@@ -297,6 +309,64 @@
 
         loadSites();
         loadJobs();
+
+        // Wishlist
+        let wishlist = JSON.parse(localStorage.getItem("manga_wishlist") || "[]");
+
+        function renderWishlist() {
+            const list = $("#wishlist-list");
+            list.innerHTML = "";
+            wishlist.forEach((entry) => {
+                const card = document.createElement("div");
+                card.className = "wishlist-card";
+                card.innerHTML =
+                    '<div class="wishlist-card-info">' +
+                    '<div class="wishlist-card-title">' + esc(entry.title) + "</div>" +
+                    '<div class="wishlist-card-url">' + esc(entry.url) + "</div>" +
+                    "</div>" +
+                    '<div class="wishlist-card-actions">' +
+                    '<button class="btn btn-primary btn-sm scrape-btn" data-url="' + esc(entry.url) + '">Scrape</button>' +
+                    '<button class="delete-btn remove-btn" data-url="' + esc(entry.url) + '">Remove</button>' +
+                    "</div>";
+                list.appendChild(card);
+            });
+
+            list.querySelectorAll(".scrape-btn").forEach((btn) => {
+                btn.addEventListener("click", () => {
+                    $("#scraper-url").value = btn.dataset.url;
+                    detectSite(btn.dataset.url);
+                });
+            });
+
+            list.querySelectorAll(".remove-btn").forEach((btn) => {
+                btn.addEventListener("click", () => {
+                    wishlist = wishlist.filter((w) => w.url !== btn.dataset.url);
+                    localStorage.setItem("manga_wishlist", JSON.stringify(wishlist));
+                    renderWishlist();
+                });
+            });
+        }
+
+        $("#wishlist-add-btn").addEventListener("click", () => {
+            const title = $("#wishlist-title").value.trim();
+            const url = $("#wishlist-url").value.trim();
+            if (!title || !url) return toast("Enter title and URL", "error");
+            if (!wishlist.find((w) => w.url === url)) {
+                wishlist.push({ title, url, added: Date.now() });
+                localStorage.setItem("manga_wishlist", JSON.stringify(wishlist));
+                renderWishlist();
+                $("#wishlist-title").value = "";
+                $("#wishlist-url").value = "";
+                toast("Added to wishlist", "success");
+            }
+        });
+
+        renderWishlist();
+
+        // Check URL hash for wishlist view
+        if (window.location.hash === "#wishlist") {
+            document.querySelector(".wishlist-section").scrollIntoView({ behavior: "smooth" });
+        }
     })();
     </script>
 </body>

@@ -202,6 +202,43 @@ async def add_comment(slug: str, data: dict):
     return {"ok": True}
 
 
+@app.delete("/api/manga/{slug}/delete")
+async def delete_manga(slug: str, path: Optional[str] = None):
+    """Delete all chapters for a manga"""
+    base = Path(path) if path else BASE_DIR
+    manga_dir = base / slug
+    if not manga_dir.is_dir():
+        raise HTTPException(404, "Manga not found")
+    
+    import shutil
+    shutil.rmtree(manga_dir)
+    
+    # Clean up tracking and comments
+    if slug in tracking:
+        del tracking[slug]
+        save_json(TRACKING_FILE, tracking)
+    if slug in comments:
+        del comments[slug]
+        save_json(COMMENTS_FILE, comments)
+    
+    return {"ok": True}
+
+
+@app.delete("/api/manga/{slug}/chapter/{chapter_num}/delete")
+async def delete_chapter(slug: str, chapter_num: float, path: Optional[str] = None):
+    """Delete a single chapter"""
+    base = Path(path) if path else BASE_DIR
+    manga_dir = base / slug
+    cbz_name = f"chapter_{chapter_num:g}.cbz"
+    cbz_path = manga_dir / cbz_name
+    
+    if not cbz_path.is_file():
+        raise HTTPException(404, f"Chapter not found: {cbz_name}")
+    
+    cbz_path.unlink()
+    return {"ok": True}
+
+
 # ──────────────────────────────────────────────
 # MULTI-SITE SUPPORT
 # ──────────────────────────────────────────────

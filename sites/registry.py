@@ -4,6 +4,7 @@ from .madara import ManhuaPlusAdapter, ManhwaTopAdapter, MadaraAdapter, Manhuasc
 from .asura import AsuraAdapter
 from .arena import ArenaAdapter
 from .mgeko import MgekoAdapter
+from .thunderscans import ThunderscansAdapter, RoliascanAdapter
 
 
 # Registry of all available site adapters
@@ -15,6 +16,8 @@ SITE_REGISTRY: Dict[str, Type[BaseSiteAdapter]] = {
     "manhuascan.us": ManhuascanAdapter,
     "manhuaplus.top": ManhuaPlusTopAdapter,
     "mgeko.cc": MgekoAdapter,
+    "en-thunderscans.com": ThunderscansAdapter,
+    "roliascan.com": RoliascanAdapter,
 }
 
 # Site display names for UI
@@ -26,6 +29,8 @@ SITE_NAMES = {
     "manhuascan.us": "Manhuascan",
     "manhuaplus.top": "ManhuaPlus V2",
     "mgeko.cc": "Mgeko",
+    "en-thunderscans.com": "Thunderscans",
+    "roliascan.com": "Roliascan",
 }
 
 
