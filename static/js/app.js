@@ -124,6 +124,29 @@
         }
     });
 
+    // ── Sites Grid ─────────────────────────────────────────
+    async function loadSites() {
+        const grid = $("#sites-grid");
+        if (!grid) return;
+        
+        const data = await api("/api/sites");
+        if (!data || !data.sites) return;
+        
+        grid.innerHTML = "";
+        data.sites.forEach((site) => {
+            const card = document.createElement("div");
+            card.className = "site-card";
+            card.innerHTML =
+                '<div class="site-card-name">' + esc(site.name) + "</div>" +
+                '<div class="site-card-domain">' + esc(site.domain) + "</div>" +
+                '<span class="site-card-status working">Available</span>';
+            card.addEventListener("click", () => {
+                window.location.href = "/scraper.html?site=" + encodeURIComponent(site.domain);
+            });
+            grid.appendChild(card);
+        });
+    }
+
     // ── Manga Detail ───────────────────────────────────────
     async function loadChaptersFor(slug) {
         const base = state.basePath || "";
@@ -373,6 +396,7 @@
     // ── Init ───────────────────────────────────────────────
     setTheme(state.theme);
     $("#path-input").value = state.basePath;
+    loadSites();
 
     // Listen for hash changes (back/forward/refresh)
     window.addEventListener("hashchange", handleHash);

@@ -268,6 +268,9 @@ async def start_scraper_job(config: dict):
 async def run_scraper_job(job_id: str, job: dict):
     try:
         import aiohttp
+        import asyncio
+        import io
+        import time
         from sites.base import ScrapeResult
 
         site_domain = job["site"]
@@ -341,6 +344,48 @@ async def run_scraper_job(job_id: str, job: dict):
             job["status"] = "downloading"
             job["log"].append(f"Downloading {len(selected)} chapters...")
 
+            # Determine manga title from slug for directory name
+            manga_slug = adapter.get_manga_slug(job["url"])
+            if not manga_slug:
+                # Try to extract from URL
+                from urllib.parse import urlparse
+                parsed = urlparse(job["url"])
+                manga_slug = parsed.path.strip('/').split('/')[-1]
+            
+            manga_title = manga_slug.replace('-', ' ').replace('_', ' ').title() if manga_slug else "Unknown Manga"
+            manga_dir = BASE_DIR / manga_title
+            manga_dir.mkdir(exist_ok=True)
+
+            async def download_image(session, url, idx, referer=None):
+                """Download a single image, return (idx, bytes, ext) or (idx, None, None)"""
+                try:
+                    headers = {}
+                    if referer:
+                        headers["Referer"] = referer
+                    async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                        if resp.status != 200:
+                            return (idx, None, None)
+                        data = await resp.read()
+                        # Determine extension from URL or content type
+                        ext = "jpg"
+                        if '.png' in url.lower():
+                            ext = "png"
+                        elif '.webp' in url.lower():
+                            ext = "webp"
+                        elif '.gif' in url.lower():
+                            ext = "gif"
+                        return (idx, data, ext)
+                except Exception:
+                    return (idx, None, None)
+
+            def create_cbz(images_data, output_path):
+                """Create a CBZ file from a list of (bytes, ext) tuples"""
+                with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_STORED) as zf:
+                    for i, (data, ext) in enumerate(images_data):
+                        if data is not None:
+                            filename = f"{i+1:04d}.{ext}"
+                            zf.writestr(filename, data)
+
             # Download each chapter
             for ch in selected:
                 job["current_chapter"] = ch.number
@@ -362,16 +407,41 @@ async def run_scraper_job(job_id: str, job: dict):
                         job["log"].append(f"Chapter {ch.number}: No images found")
                         continue
 
-                    # Download images and create CBZ
-                    # For now, just log the image URLs (full implementation would download and create CBZ)
-                    job["log"].append(f"Chapter {ch.number}: Found {len(image_urls)} images")
-                    job["completed_chapters"] += 1
+                    job["log"].append(f"Chapter {ch.number}: Found {len(image_urls)} images, downloading...")
+
+                    # Download images concurrently with rate limiting
+                    sem = asyncio.Semaphore(job["workers"])
                     
-                    # TODO: Implement actual image downloading and CBZ creation
-                    # This would involve:
-                    # 1. Download all images concurrently
-                    # 2. Create CBZ file with images
-                    # 3. Save to manga directory
+                    async def limited_download(session, url, idx, referer):
+                        async with sem:
+                            # Small delay to avoid hammering the server
+                            await asyncio.sleep(0.1)
+                            return await download_image(session, url, idx, referer)
+
+                    tasks = [
+                        limited_download(session, url, i, f"https://{site_domain}/")
+                        for i, url in enumerate(image_urls)
+                    ]
+                    results = await asyncio.gather(*tasks)
+                    
+                    # Sort by index and pair data with extensions
+                    results.sort(key=lambda x: x[0])
+                    images_data = [(data, ext) for _, data, ext in results]
+                    
+                    # Filter out failed downloads
+                    successful = sum(1 for d, _ in images_data if d is not None)
+                    if successful == 0:
+                        job["failed_chapters"].append(ch.number)
+                        job["log"].append(f"Chapter {ch.number}: All image downloads failed")
+                        continue
+
+                    # Create CBZ file
+                    cbz_name = f"chapter_{ch.number:g}.cbz"
+                    cbz_path = manga_dir / cbz_name
+                    create_cbz(images_data, cbz_path)
+                    
+                    job["completed_chapters"] += 1
+                    job["log"].append(f"Chapter {ch.number}: Saved {cbz_name} ({successful}/{len(image_urls)} images)")
 
                 except Exception as e:
                     job["failed_chapters"].append(ch.number)
@@ -383,7 +453,9 @@ async def run_scraper_job(job_id: str, job: dict):
 
             job["status"] = "completed"
             job["progress"] = 100
-            job["log"].append("Done!")
+            job["log"].append(f"Done! Saved {job['completed_chapters']} chapters to {manga_dir}/")
+            if job["failed_chapters"]:
+                job["log"].append(f"Failed chapters: {job['failed_chapters']}")
 
     except Exception as e:
         job["status"] = "failed"

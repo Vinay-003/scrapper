@@ -28,7 +28,11 @@ class MadaraAdapter(BaseSiteAdapter):
     # CSS selectors for Madara theme
     READ_CONTAINER_SELECTOR = ".read-container img"
     READING_CONTENT_SELECTOR = ".reading-content .page-break img"
-    CHAPTER_LIST_SELECTOR = ".listing-chapters_wrap li.wp-manga-chapter a"
+    READER_AREA_SELECTOR = "#readerarea img"  # Alternative Madara variant (manhuascan.us)
+    CHAPTER_LIST_SELECTORS = [
+        ".listing-chapters_wrap li.wp-manga-chapter a",
+        ".eph-num a",  # Alternative Madara variant (manhuascan.us)
+    ]
     
     def get_manga_slug(self, url: str) -> Optional[str]:
         """Extract manga slug from URL"""
@@ -68,6 +72,7 @@ class MadaraAdapter(BaseSiteAdapter):
         selectors = [
             self.READ_CONTAINER_SELECTOR,
             self.READING_CONTENT_SELECTOR,
+            self.READER_AREA_SELECTOR,
         ]
         
         for selector in selectors:
@@ -88,18 +93,21 @@ class MadaraAdapter(BaseSiteAdapter):
         soup = BeautifulSoup(html, 'html.parser')
         chapters = []
         
-        # Find chapter list
-        chapter_links = soup.select(self.CHAPTER_LIST_SELECTOR)
+        # Try multiple selectors for chapter list
+        chapter_links = []
+        for selector in self.CHAPTER_LIST_SELECTORS:
+            chapter_links = soup.select(selector)
+            if chapter_links:
+                break
         
         for link in chapter_links:
             href = link.get('href', '')
             text = link.get_text(strip=True)
             
-            # Extract chapter number
-            chapter_num = extract_chapter_number(text)
+            # Extract chapter number - prefer URL (more reliable)
+            chapter_num = extract_chapter_number(href)
             if chapter_num is None:
-                # Try extracting from URL
-                chapter_num = extract_chapter_number(href)
+                chapter_num = extract_chapter_number(text)
             
             if chapter_num is not None:
                 chapters.append(ChapterInfo(
@@ -130,10 +138,24 @@ class ManhwaTopAdapter(MadaraAdapter):
     domain = "manhwatop.com"
 
 
+class ManhuascanAdapter(MadaraAdapter):
+    """Adapter for manhuascan.us"""
+    name = "Manhuascan"
+    domain = "manhuascan.us"
+
+
+class ManhuaPlusTopAdapter(MadaraAdapter):
+    """Adapter for manhuaplus.top (v2.0 mirror)"""
+    name = "ManhuaPlus V2"
+    domain = "manhuaplus.top"
+
+
 # Registry of Madara-based sites
 MADARA_SITES = {
     "manhuaplus.com": ManhuaPlusAdapter,
     "manhwatop.com": ManhwaTopAdapter,
+    "manhuascan.us": ManhuascanAdapter,
+    "manhuaplus.top": ManhuaPlusTopAdapter,
 }
 
 

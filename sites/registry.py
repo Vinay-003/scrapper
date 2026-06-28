@@ -1,8 +1,9 @@
 from typing import Dict, Type, Optional
 from .base import BaseSiteAdapter
-from .madara import ManhuaPlusAdapter, ManhwaTopAdapter, MadaraAdapter
+from .madara import ManhuaPlusAdapter, ManhwaTopAdapter, MadaraAdapter, ManhuascanAdapter, ManhuaPlusTopAdapter
 from .asura import AsuraAdapter
 from .arena import ArenaAdapter
+from .mgeko import MgekoAdapter
 
 
 # Registry of all available site adapters
@@ -11,6 +12,9 @@ SITE_REGISTRY: Dict[str, Type[BaseSiteAdapter]] = {
     "asurascanz.com": AsuraAdapter,
     "manhuaplus.com": ManhuaPlusAdapter,
     "manhwatop.com": ManhwaTopAdapter,
+    "manhuascan.us": ManhuascanAdapter,
+    "manhuaplus.top": ManhuaPlusTopAdapter,
+    "mgeko.cc": MgekoAdapter,
 }
 
 # Site display names for UI
@@ -19,6 +23,9 @@ SITE_NAMES = {
     "asurascanz.com": "Asura Scans",
     "manhuaplus.com": "ManhuaPlus",
     "manhwatop.com": "ManhwaTop",
+    "manhuascan.us": "Manhuascan",
+    "manhuaplus.top": "ManhuaPlus V2",
+    "mgeko.cc": "Mgeko",
 }
 
 
