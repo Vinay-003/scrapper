@@ -518,3 +518,8 @@ async def delete_scraper_job(job_id: str):
         raise HTTPException(404, "Job not found")
     del scraper_jobs[job_id]
     return {"ok": True}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
