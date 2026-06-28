@@ -325,8 +325,9 @@ async def run_scraper_job(job_id: str, job: dict):
 
         connector = aiohttp.TCPConnector(limit=job["workers"] * job["chapter_workers"] + 4)
         async with aiohttp.ClientSession(connector=connector, headers=adapter.headers) as session:
-            # Fetch manga page
-            manga_url = adapter.get_manga_url(adapter.get_manga_slug(job["url"]) or "")
+            # Resolve correct manga slug (some sites have different slugs for chapter vs manga URLs)
+            manga_slug = await adapter.resolve_manga_slug(session, job["url"])
+            manga_url = adapter.get_manga_url(manga_slug or "")
             if not manga_url:
                 # Try using the original URL directly
                 manga_url = job["url"]

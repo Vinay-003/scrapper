@@ -56,6 +56,41 @@ class MgekoAdapter(BaseSiteAdapter):
         
         return None
     
+    async def resolve_manga_slug(self, session, url: str) -> Optional[str]:
+        """Resolve correct manga slug from any URL.
+        
+        Chapter URLs like /reader/en/{slug}-chapter-1-eng-li/ have a different
+        slug than the manga page (e.g., sword-sheath-s-child vs sword-sheath-s-child-mg1).
+        Fetch the chapter page and extract the manga link from <h1><a href="/manga/{slug}/">.
+        """
+        parsed = urlparse(url)
+        
+        # Only need to resolve if it's a reader URL
+        if '/reader/' not in parsed.path:
+            return self.get_manga_slug(url)
+        
+        try:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    return self.get_manga_slug(url)
+                html = await resp.text()
+            
+            soup = BeautifulSoup(html, 'html.parser')
+            # The chapter page has <h1><a href="/manga/{slug}/">
+            h1 = soup.find('h1')
+            if h1:
+                a = h1.find('a')
+                if a:
+                    href = a.get('href', '')
+                    if '/manga/' in href:
+                        slug = href.split('/manga/')[-1].strip('/')
+                        if slug:
+                            return slug
+        except Exception:
+            pass
+        
+        return self.get_manga_slug(url)
+    
     def get_manga_url(self, slug: str) -> str:
         """Get manga page URL from slug"""
         return f"https://{self.domain}/manga/{slug}/"
