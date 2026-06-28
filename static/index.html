@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manga Reader</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="navbar">
+        <a href="#/" class="logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+                <path d="M20 17V7a2 2 0 0 0-2-2H6.5A2.5 2.5 0 0 0 4 7.5v12"/>
+            </svg>
+            <span>Manga Reader</span>
+        </a>
+        <div class="nav-right">
+            <button id="theme-toggle" class="icon-btn" title="Toggle theme">
+                <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/>
+                    <line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+                    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/>
+                    <line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+                    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+                </svg>
+                <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+                </svg>
+            </button>
+        </div>
+    </nav>
+
+    <main id="app">
+        <!-- HOME -->
+        <section id="page-home" class="page active">
+            <div class="container">
+                <h1 class="page-title">Your Manga</h1>
+                <div class="path-bar">
+                    <input type="text" id="path-input" value="" placeholder="Enter directory path...">
+                    <button id="scan-btn" class="btn btn-primary">Scan</button>
+                </div>
+                <div id="manga-grid" class="manga-grid"></div>
+                <div id="empty-state" class="empty-state" style="display:none">
+                    <p>No manga found in this directory.</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- MANHWA DETAIL -->
+        <section id="page-detail" class="page">
+            <div class="container">
+                <button id="back-btn" class="btn btn-ghost back-btn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                    Back
+                </button>
+                <div class="detail-header">
+                    <h1 id="detail-title">Loading...</h1>
+                    <p id="detail-chapters" class="subtitle"></p>
+                    <button id="continue-btn" class="btn btn-primary" style="display:none">Continue Reading</button>
+                </div>
+                <div class="search-bar">
+                    <input type="text" id="chapter-search" placeholder="Search chapters...">
+                </div>
+                <div id="chapter-list" class="chapter-list"></div>
+                <div class="comments-section">
+                    <h2>Comments</h2>
+                    <div class="comment-form">
+                        <input type="text" id="comment-name" placeholder="Your name" value="Anonymous">
+                        <textarea id="comment-text" placeholder="Leave a comment..."></textarea>
+                        <button id="comment-submit" class="btn btn-primary">Post</button>
+                    </div>
+                    <div id="comments-list" class="comments-list"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- READER -->
+        <section id="page-reader" class="page">
+            <div class="reader">
+                <div class="reader-topbar" id="reader-topbar">
+                    <button id="reader-back" class="icon-btn" title="Back to chapters">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+                    </button>
+                    <div class="reader-title">
+                        <span id="reader-chapter-label">Chapter 0</span>
+                    </div>
+                    <div class="reader-controls">
+                        <button id="zoom-out" class="icon-btn" title="Zoom out">-</button>
+                        <span id="zoom-label" class="zoom-label">Fit</span>
+                        <button id="zoom-in" class="icon-btn" title="Zoom in">+</button>
+                    </div>
+                </div>
+                <div class="reader-body" id="reader-body">
+                    <div class="reader-pages" id="reader-pages"></div>
+                </div>
+                <div class="reader-bottombar" id="reader-bottombar">
+                    <button id="prev-chapter" class="btn btn-ghost">Prev Chapter</button>
+                    <span id="scroll-progress" class="scroll-progress">0%</span>
+                    <button id="next-chapter" class="btn btn-ghost">Next Chapter</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <div id="toast-box" class="toast-box"></div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
