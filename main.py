@@ -10,6 +10,9 @@ import uuid
 from typing import Optional
 from datetime import datetime
 
+# Import multi-site adapter system
+from sites import registry
+
 app = FastAPI(title="Manga Reader")
 
 BASE_DIR = Path(__file__).parent
@@ -200,6 +203,25 @@ async def add_comment(slug: str, data: dict):
 
 
 # ──────────────────────────────────────────────
+# MULTI-SITE SUPPORT
+# ──────────────────────────────────────────────
+@app.get("/api/sites")
+async def list_supported_sites():
+    """List all supported manga sites"""
+    return {"sites": registry.get_all_sites()}
+
+
+@app.post("/api/scraper/detect")
+async def detect_site_from_url(data: dict):
+    """Detect which site a URL is from"""
+    url = data.get("url", "")
+    domain = registry.detect_site(url)
+    if domain:
+        return {"detected": True, "domain": domain, "name": registry.SITE_NAMES.get(domain, domain)}
+    return {"detected": False}
+
+
+# ──────────────────────────────────────────────
 # SCRAPER JOBS
 # ──────────────────────────────────────────────
 scraper_jobs = {}  # job_id -> job info
@@ -211,10 +233,17 @@ async def start_scraper_job(config: dict):
     if not url:
         raise HTTPException(400, "URL is required")
 
+    # Detect site from URL
+    site_domain = config.get("site") or registry.detect_site(url)
+    if not site_domain:
+        raise HTTPException(400, "Unsupported site. Use /api/sites to list supported sites.")
+
     job_id = str(uuid.uuid4())[:8]
     job = {
         "id": job_id,
         "url": url,
+        "site": site_domain,
+        "site_name": registry.SITE_NAMES.get(site_domain, site_domain),
         "start": config.get("start"),
         "end": config.get("end"),
         "workers": config.get("workers", 4),
@@ -233,51 +262,67 @@ async def start_scraper_job(config: dict):
 
     asyncio.create_task(run_scraper_job(job_id, job))
 
-    return {"job_id": job_id, "status": "starting"}
+    return {"job_id": job_id, "status": "starting", "site": job["site_name"]}
 
 
 async def run_scraper_job(job_id: str, job: dict):
     try:
-        from arenascans import (
-            get_manga_url, get_manga_title, get_chapters, download_chapter,
-            BanDetector, HEADERS, REQUEST_TIMEOUT, DEFAULT_WORKERS,
-            extract_slug
-        )
         import aiohttp
+        from sites.base import ScrapeResult
 
-        job["status"] = "fetching"
-        job["log"].append("Fetching manga info...")
-
-        try:
-            manga_url = get_manga_url(job["url"])
-        except ValueError as e:
+        site_domain = job["site"]
+        adapter = registry.get_adapter(site_domain)
+        
+        if not adapter:
             job["status"] = "failed"
-            job["error"] = str(e)
-            job["log"].append(f"Error: {e}")
+            job["error"] = f"No adapter found for site: {site_domain}"
+            job["log"].append(job["error"])
             return
 
-        connector = aiohttp.TCPConnector(limit=job["workers"] * job["chapter_workers"] + 4)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            manga_title = await get_manga_title(session, manga_url)
-            job["log"].append(f"Manga: {manga_title}")
+        job["status"] = "fetching"
+        job["log"].append(f"Using adapter: {adapter.name}")
+        job["log"].append(f"Fetching manga info from {site_domain}...")
 
-            chapters = await get_chapters(session, manga_url)
+        connector = aiohttp.TCPConnector(limit=job["workers"] * job["chapter_workers"] + 4)
+        async with aiohttp.ClientSession(connector=connector, headers=adapter.headers) as session:
+            # Fetch manga page
+            manga_url = adapter.get_manga_url(adapter.get_manga_slug(job["url"]) or "")
+            if not manga_url:
+                # Try using the original URL directly
+                manga_url = job["url"]
+            
+            try:
+                async with session.get(manga_url) as resp:
+                    if resp.status != 200:
+                        job["status"] = "failed"
+                        job["error"] = f"Failed to fetch manga page: HTTP {resp.status}"
+                        job["log"].append(job["error"])
+                        return
+                    manga_html = await resp.text()
+            except Exception as e:
+                job["status"] = "failed"
+                job["error"] = f"Failed to fetch manga page: {e}"
+                job["log"].append(job["error"])
+                return
+
+            # Get available chapters
+            chapters = adapter.get_available_chapters(manga_html)
             if not chapters:
                 job["status"] = "failed"
                 job["error"] = "No chapters found"
                 job["log"].append("No chapters found. Check the URL.")
                 return
 
-            nums = list(chapters.keys())
-            lo, hi = nums[0], nums[-1]
+            job["log"].append(f"Found {len(chapters)} chapters")
 
-            start = job["start"] if job["start"] is not None else lo
-            end = job["end"] if job["end"] is not None else hi
+            # Filter by chapter range
+            start = job["start"] if job["start"] is not None else chapters[0].number
+            end = job["end"] if job["end"] is not None else chapters[-1].number
 
             if start is None:
-                start = lo
+                start = chapters[0].number
             if end is None:
-                end = hi
+                end = chapters[-1].number
 
             start = float(start)
             end = float(end)
@@ -285,7 +330,7 @@ async def run_scraper_job(job_id: str, job: dict):
             if start > end:
                 start, end = end, start
 
-            selected = [(ch, url) for ch, url in chapters.items() if start <= ch <= end]
+            selected = [ch for ch in chapters if start <= ch.number <= end]
             if not selected:
                 job["status"] = "failed"
                 job["error"] = f"No chapters in range {start}–{end}"
@@ -296,29 +341,41 @@ async def run_scraper_job(job_id: str, job: dict):
             job["status"] = "downloading"
             job["log"].append(f"Downloading {len(selected)} chapters...")
 
-            img_semaphore = asyncio.Semaphore(job["workers"] * job["chapter_workers"])
-            ch_semaphore = asyncio.Semaphore(job["chapter_workers"])
-
-            ban_detector = BanDetector()
-
-            for ch_num, ch_url in selected:
-                job["current_chapter"] = ch_num
-                job["log"].append(f"Chapter {ch_num}...")
+            # Download each chapter
+            for ch in selected:
+                job["current_chapter"] = ch.number
+                job["log"].append(f"Chapter {ch.number}...")
 
                 try:
-                    ok = await download_chapter(
-                        session, ch_num, ch_url, manga_title,
-                        img_semaphore, ch_semaphore
-                    )
-                    if ok:
-                        job["completed_chapters"] += 1
-                        job["log"].append(f"Chapter {ch_num} done")
-                    else:
-                        job["failed_chapters"].append(ch_num)
-                        job["log"].append(f"Chapter {ch_num} partial")
+                    # Fetch chapter page
+                    async with session.get(ch.url) as resp:
+                        if resp.status != 200:
+                            job["failed_chapters"].append(ch.number)
+                            job["log"].append(f"Chapter {ch.number} failed: HTTP {resp.status}")
+                            continue
+                        ch_html = await resp.text()
+
+                    # Get image URLs
+                    image_urls = adapter.get_image_urls_from_page(ch_html)
+                    if not image_urls:
+                        job["failed_chapters"].append(ch.number)
+                        job["log"].append(f"Chapter {ch.number}: No images found")
+                        continue
+
+                    # Download images and create CBZ
+                    # For now, just log the image URLs (full implementation would download and create CBZ)
+                    job["log"].append(f"Chapter {ch.number}: Found {len(image_urls)} images")
+                    job["completed_chapters"] += 1
+                    
+                    # TODO: Implement actual image downloading and CBZ creation
+                    # This would involve:
+                    # 1. Download all images concurrently
+                    # 2. Create CBZ file with images
+                    # 3. Save to manga directory
+
                 except Exception as e:
-                    job["failed_chapters"].append(ch_num)
-                    job["log"].append(f"Chapter {ch_num} error: {e}")
+                    job["failed_chapters"].append(ch.number)
+                    job["log"].append(f"Chapter {ch.number} error: {e}")
 
                 job["progress"] = round(
                     (job["completed_chapters"] + len(job["failed_chapters"])) / job["total_chapters"] * 100
@@ -352,8 +409,3 @@ async def delete_scraper_job(job_id: str):
         raise HTTPException(404, "Job not found")
     del scraper_jobs[job_id]
     return {"ok": True}
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)

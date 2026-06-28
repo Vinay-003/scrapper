@@ -34,13 +34,22 @@
 
     <main class="container">
         <h1 class="page-title">Manga Scraper</h1>
-        <p class="subtitle">Download manga from arenascan.com</p>
+        <p class="subtitle">Download manga from multiple sites</p>
 
         <!-- Config Form -->
         <div class="scraper-config">
             <div class="form-group">
+                <label for="scraper-site">Site</label>
+                <select id="scraper-site">
+                    <option value="">Auto-detect from URL</option>
+                </select>
+                <span class="form-hint" id="site-status">Loading supported sites...</span>
+            </div>
+
+            <div class="form-group">
                 <label for="scraper-url">Manga URL *</label>
-                <input type="url" id="scraper-url" placeholder="https://arenascan.com/manga/your-manga/">
+                <input type="url" id="scraper-url" placeholder="https://manhuaplus.com/manga/your-manga/">
+                <span class="form-hint" id="url-status"></span>
             </div>
 
             <div class="form-row">
@@ -88,6 +97,7 @@
     (function() {
         const $ = (sel) => document.querySelector(sel);
         let pollingInterval = null;
+        let supportedSites = {};
 
         // Theme
         let theme = localStorage.getItem("manga_theme") || "dark";
@@ -121,6 +131,55 @@
             }
         }
 
+        // Load supported sites
+        async function loadSites() {
+            const data = await api("/api/sites");
+            if (data && data.sites) {
+                supportedSites = data.sites;
+                const select = $("#scraper-site");
+                select.innerHTML = '<option value="">Auto-detect from URL</option>';
+                for (const [domain, name] of Object.entries(supportedSites)) {
+                    const opt = document.createElement("option");
+                    opt.value = domain;
+                    opt.textContent = name;
+                    select.appendChild(opt);
+                }
+                $("#site-status").textContent = `Supports ${Object.keys(supportedSites).length} sites`;
+            }
+        }
+
+        // Detect site from URL
+        let detectTimeout = null;
+        async function detectSite(url) {
+            if (!url) {
+                $("#url-status").textContent = "";
+                return;
+            }
+            
+            clearTimeout(detectTimeout);
+            detectTimeout = setTimeout(async () => {
+                const data = await api("/api/scraper/detect", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({url}),
+                });
+                
+                if (data && data.detected) {
+                    $("#url-status").innerHTML = `<span style="color: var(--green)">Detected: ${esc(data.name)}</span>`;
+                    // Auto-select site
+                    const siteSelect = $("#scraper-site");
+                    for (const opt of siteSelect.options) {
+                        if (opt.value === data.domain) {
+                            opt.selected = true;
+                            break;
+                        }
+                    }
+                } else {
+                    $("#url-status").innerHTML = `<span style="color: var(--red)">Site not supported</span>`;
+                }
+            }, 500);
+        }
+
         // Start job
         $("#start-btn").addEventListener("click", async () => {
             const url = $("#scraper-url").value.trim();
@@ -128,6 +187,7 @@
 
             const config = {
                 url,
+                site: $("#scraper-site").value || undefined,
                 start: $("#scraper-start").value ? parseFloat($("#scraper-start").value) : null,
                 end: $("#scraper-end").value ? parseFloat($("#scraper-end").value) : null,
                 workers: parseInt($("#scraper-workers").value) || 4,
@@ -141,11 +201,16 @@
             });
 
             if (data) {
-                toast("Download started!", "success");
+                toast(`Download started on ${data.site}!`, "success");
                 startPolling();
             } else {
                 toast("Failed to start download", "error");
             }
+        });
+
+        // URL input detection
+        $("#scraper-url").addEventListener("input", (e) => {
+            detectSite(e.target.value);
         });
 
         // Render jobs
@@ -230,6 +295,7 @@
             }, 2000);
         }
 
+        loadSites();
         loadJobs();
     })();
     </script>
