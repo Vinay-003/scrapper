@@ -28,7 +28,7 @@ function MangaImage({ uri, width, dims }: { uri: string; width: number; dims?: {
     return <Image source={{ uri }} style={{ width, minHeight: 200 }} resizeMode="contain" />;
   }
   const height = (width * dims.h) / dims.w;
-  return <Image source={{ uri }} style={{ width, height }} resizeMode="cover" />;
+  return <Image source={{ uri }} style={{ width, height }} resizeMode="contain" />;
 }
 
 const MemoizedMangaImage = MangaImage;

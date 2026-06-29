@@ -132,7 +132,7 @@ export async function saveChapterImages(
         for (let s = 0; s < segmentCount; s++) {
           const originY = s * MAX_SEGMENT_HEIGHT;
           const segH = Math.min(MAX_SEGMENT_HEIGHT, imgH - originY);
-          const segName = s === 0 ? `${padded}.${ext}` : `${padded}:s${s + 1}.${ext}`;
+          const segName = s === 0 ? `${padded}.${ext}` : `${padded}_s${s + 1}.${ext}`;
 
           const segCtx = ImageManipulator.manipulate(tmpFile.uri);
           segCtx.crop({ originX: 0, originY, width: imgW, height: segH });
