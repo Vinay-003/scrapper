@@ -106,12 +106,11 @@ export async function createCbz(
   const content = await zip.generateAsync({ type: "uint8array", compression: "STORE" });
 
   const mangaDirPath = new Directory(Paths.document, "manga");
-  const chapterDir = new Directory(mangaDirPath, mangaDir);
-  if (!chapterDir.exists) {
-    chapterDir.create();
+  if (!mangaDirPath.exists) {
+    mangaDirPath.create();
   }
 
-  const cbzFile = new File(chapterDir, `chapter_${chapterNumber}.cbz`);
+  const cbzFile = new File(mangaDirPath, `${mangaDir}_chapter_${chapterNumber}.cbz`);
   const base64 = uint8ArrayToBase64(content);
   await cbzFile.write(base64);
 
