@@ -1,42 +1,13 @@
 /**
- * Lightweight HTML parser for React Native.
- * No Node.js dependencies - pure regex string matching.
+ * Lightweight HTML utilities for React Native scraping.
+ * No Node.js dependencies — pure regex matching for the patterns we actually need.
  */
 
-/**
- * Find all elements matching a CSS-like selector.
- * Supports: tag, .class, #id, tag.class, tag#id, [attr]
- */
-export function select(html: string, selector: string): string[] {
-  const elements = splitElements(html);
-  return elements.filter((el) => matchesSelector(el, selector));
-}
+// --- Image extraction ---
 
 /**
- * Get attribute value from an HTML element string.
- */
-export function attr(element: string, name: string): string | null {
-  // Match attribute with value: attr="value" or attr='value' or attr=value
-  const regex = new RegExp(`${name}\\s*=\\s*["']([^"']*)["']`, "i");
-  const m = element.match(regex);
-  if (m) return m[1];
-
-  // Boolean attribute (just present)
-  const boolRegex = new RegExp(`\\s${name}(?:\\s|>)`, "i");
-  if (boolRegex.test(element)) return "";
-
-  return null;
-}
-
-/**
- * Get text content from an HTML element (strips tags).
- */
-export function text(element: string): string {
-  return element.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
-}
-
-/**
- * Find all img tags in HTML and extract their src/data-src.
+ * Find all <img> tags in HTML and extract their src.
+ * Tries data-src/data-lazy-src first, falls back to src.
  */
 export function findImages(html: string, preferDataSrc = true): string[] {
   const results: string[] = [];
@@ -48,9 +19,9 @@ export function findImages(html: string, preferDataSrc = true): string[] {
     let src = null;
 
     if (preferDataSrc) {
-      src = attr(tag, "data-src") || attr(tag, "data-lazy-src") || attr(tag, "src");
+      src = getAttr(tag, "data-src") || getAttr(tag, "data-lazy-src") || getAttr(tag, "src");
     } else {
-      src = attr(tag, "src") || attr(tag, "data-src") || attr(tag, "data-lazy-src");
+      src = getAttr(tag, "src") || getAttr(tag, "data-src") || getAttr(tag, "data-lazy-src");
     }
 
     if (src && !src.startsWith("data:") && !src.includes("1x1") && !src.includes("spacer")) {
@@ -61,21 +32,75 @@ export function findImages(html: string, preferDataSrc = true): string[] {
   return results;
 }
 
+// --- Element extraction ---
+
 /**
- * Find all anchor tags and extract href + text.
+ * Extract the inner HTML of an element found by ID.
+ * Uses tag depth counting for correct nesting.
+ * e.g., findById(html, 'chapter-reader') → inner HTML string
  */
-export function findLinks(
+export function findById(html: string, id: string): string | null {
+  // Find opening tag with this id
+  const tagRegex = new RegExp(`<([\\w-]+)\\s[^>]*?id=["']${escapeRegex(id)}["'][^>]*?>`, "i");
+  const openMatch = tagRegex.exec(html);
+  if (!openMatch) return null;
+
+  const tagName = openMatch[1].toLowerCase();
+  const startPos = openMatch.index + openMatch[0].length;
+
+  // Use depth counting to find the matching close tag
+  return extractInnerByTag(html, tagName, startPos);
+}
+
+/**
+ * Extract inner HTML of elements matching a CSS class selector.
+ * Supports: '.class', 'tag.class', '.class1 .class2'
+ * e.g., selectInner(html, '.reading-content') → inner HTML string
+ */
+export function selectInner(html: string, selector: string): string | null {
+  const parts = selector.trim().split(/\s+/);
+  let currentHtml = html;
+
+  for (const part of parts) {
+    const result = findFirstMatching(currentHtml, part);
+    if (!result) return null;
+    currentHtml = result;
+  }
+
+  return currentHtml;
+}
+
+/**
+ * Select all <a> tags matching a selector and extract href + text.
+ * e.g., selectLinks(html, '.chapter-list a') → [{href, text}]
+ */
+export function selectLinks(
   html: string,
+  selector: string,
   filter?: (href: string, text: string) => boolean
 ): { href: string; text: string }[] {
   const results: { href: string; text: string }[] = [];
-  const linkRegex = /<a\s+[^>]*?>[\s\S]*?<\/a>/gi;
+
+  // Find the container first
+  const parts = selector.trim().split(/\s+/);
+  let containerHtml = html;
+
+  // Everything except the last part is a container
+  for (let i = 0; i < parts.length - 1; i++) {
+    const result = findFirstMatching(containerHtml, parts[i]);
+    if (!result) return [];
+    containerHtml = result;
+  }
+
+  // Last part is the tag to extract (usually 'a')
+  const lastPart = parts[parts.length - 1];
+  const tagRegex = /<a\s+[^>]*?>[\s\S]*?<\/a>/gi;
   let match;
 
-  while ((match = linkRegex.exec(html)) !== null) {
+  while ((match = tagRegex.exec(containerHtml)) !== null) {
     const tag = match[0];
-    const href = attr(tag, "href");
-    const linkText = text(tag);
+    const href = getAttr(tag, "href");
+    const linkText = tag.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
     if (href && (!filter || filter(href, linkText))) {
       results.push({ href, text: linkText });
     }
@@ -84,117 +109,98 @@ export function findLinks(
   return results;
 }
 
-/**
- * Find elements inside a specific container.
- * Returns the inner HTML of the first matching container.
- */
-export function selectOne(html: string, selector: string): string | null {
-  const results = select(html, selector);
-  return results.length > 0 ? results[0] : null;
-}
+// --- Attribute extraction ---
 
 /**
- * Find a container element and return its inner HTML.
- * Works by finding the opening tag and extracting until the matching close.
+ * Get an attribute value from an HTML tag string.
  */
-export function selectInner(html: string, selector: string): string | null {
-  const tagRegex = /<(\w+)([^>]*)>/i;
-  const selectorParts = selector.split(/\s*>\s*/);
+export function getAttr(tag: string, name: string): string | null {
+  const regex = new RegExp(`${name}\\s*=\\s*["']([^"']*)["']`, "i");
+  const m = tag.match(regex);
+  if (m) return m[1];
 
-  let currentHtml = html;
+  // Boolean attribute (just present, no value)
+  const boolRegex = new RegExp(`\\s${name}(?:\\s|>)`, "i");
+  if (boolRegex.test(tag)) return "";
 
-  for (const part of selectorParts) {
-    const tagMatch = tagRegex.exec(part);
-    if (!tagMatch) return null;
-
-    const tagName = tagMatch[1].toLowerCase();
-    let classFilter: string | null = null;
-    let idFilter: string | null = null;
-
-    const classMatch = part.match(/\.([\w-]+)/);
-    if (classMatch) classFilter = classMatch[1];
-
-    const idMatch = part.match(/#([\w-]+)/);
-    if (idMatch) idFilter = idMatch[1];
-
-    // Find the tag with optional class/id filter
-    const tagOpenRegex = new RegExp(
-      `<${tagName}\\s+[^>]*?(?:class\\s*=\\s*["'][^"']*\\b${classFilter || tagName}\\b[^"']*["'])?[^>]*?>`,
-      "gi"
-    );
-
-    let found = false;
-    let openMatch;
-    while ((openMatch = tagOpenRegex.exec(currentHtml)) !== null) {
-      const tagStr = openMatch[0];
-
-      // Check class filter
-      if (classFilter) {
-        const classAttr = attr(tagStr, "class") || "";
-        if (!classAttr.split(/\s+/).includes(classFilter)) continue;
-      }
-
-      // Check id filter
-      if (idFilter) {
-        const idAttr = attr(tagStr, "id");
-        if (idAttr !== idFilter) continue;
-      }
-
-      // Found matching open tag, extract inner HTML
-      const startPos = openMatch.index + tagStr.length;
-      const closeTag = `</${tagName}>`;
-      const closePos = currentHtml.toLowerCase().indexOf(closeTag, startPos);
-
-      if (closePos !== -1) {
-        currentHtml = currentHtml.substring(startPos, closePos);
-        found = true;
-        break;
-      }
-    }
-
-    if (!found) return null;
-  }
-
-  return currentHtml;
+  return null;
 }
 
 // --- Internal helpers ---
 
-function splitElements(html: string): string[] {
-  const elements: string[] = [];
-  const tagRegex = /<(\w+)[^>]*?>[\s\S]*?<\/\1>/gi;
-  let match;
+function findFirstMatching(html: string, selector: string): string | null {
+  // Parse selector: tag, .class, #id, tag.class, tag#id
+  const tagMatch = selector.match(/^(\w+)?/);
+  const classMatch = selector.match(/\.([\w-]+)/);
+  const idMatch = selector.match(/#([\w-]+)/);
 
-  while ((match = tagRegex.exec(html)) !== null) {
-    elements.push(match[0]);
+  const tagName = tagMatch?.[1] || (classMatch || idMatch ? "*" : null);
+
+  // Build a regex to find the opening tag
+  let tagPattern: RegExp;
+
+  if (idMatch) {
+    // Find by ID
+    tagPattern = new RegExp(
+      `<${tagName || "\\w+"}\\s[^>]*?id=["']${escapeRegex(idMatch[1])}["'][^>]*?>`,
+      "gi"
+    );
+  } else if (classMatch) {
+    // Find by class
+    tagPattern = new RegExp(
+      `<${tagName || "\\w+"}\\s[^>]*?class=["'][^"']*\\b${escapeRegex(classMatch[1])}\\b[^"']*["'][^>]*?>`,
+      "gi"
+    );
+  } else if (tagName) {
+    tagPattern = new RegExp(`<${tagName}(?:\\s[^>]*)?>`, "gi");
+  } else {
+    return null;
   }
 
-  return elements;
+  const openMatch = tagPattern.exec(html);
+  if (!openMatch) return null;
+
+  const actualTag = openMatch[1]?.toLowerCase() || tagName?.toLowerCase() || "div";
+  const startPos = openMatch.index + openMatch[0].length;
+
+  return extractInnerByTag(html, actualTag, startPos);
 }
 
-function matchesSelector(element: string, selector: string): boolean {
-  const tagMatch = element.match(/^<(\w+)/i);
-  if (!tagMatch) return false;
+/**
+ * Extract inner HTML by counting tag depth.
+ * Starting from `startPos`, finds the matching closing tag.
+ */
+function extractInnerByTag(html: string, tagName: string, startPos: number): string | null {
+  let depth = 1;
+  const closeTagLower = `</${tagName}`;
+  const openTagLower = `<${tagName}`;
 
-  const tagName = tagMatch[1].toLowerCase();
-  const parts = selector.toLowerCase().split(/[\s.#]/);
+  // Match both opening and closing tags of this element type
+  const tagPattern = new RegExp(`<(/?)(${escapeRegex(tagName)})(\\s|>|/>)`, "gi");
+  tagPattern.lastIndex = startPos;
 
-  // First part should match tag name
-  if (parts[0] && parts[0] !== tagName) return false;
+  while (depth > 0) {
+    const m = tagPattern.exec(html);
+    if (!m) break;
 
-  // Check class
-  const classMatch = selector.match(/\.([\w-]+)/);
-  if (classMatch) {
-    const classAttr = attr(element, "class") || "";
-    if (!classAttr.split(/\s+/).includes(classMatch[1])) return false;
+    const isClosing = m[1] === "/";
+    if (isClosing) {
+      depth--;
+      if (depth === 0) {
+        return html.substring(startPos, m.index);
+      }
+    } else {
+      // Don't count self-closing tags
+      if (!m[0].endsWith("/>")) {
+        depth++;
+      }
+    }
   }
 
-  // Check id
-  const idMatch = selector.match(/#([\w-]+)/);
-  if (idMatch) {
-    const idAttr = attr(element, "id");
-    if (idAttr !== idMatch[1]) return false;
-  }
+  // If we didn't find a matching close tag, return everything after start
+  return html.substring(startPos);
+}
 
-  return true;
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -4,12 +4,11 @@ import {
   extractChapterNumber,
   normalizeUrl,
 } from "./base";
-import { findImages, findLinks, selectInner } from "../html";
+import { selectInner, findImages, selectLinks } from "../html";
 
 export class AsuraAdapter extends BaseSiteAdapter {
   readonly name = "AsuraScans";
   readonly domain = "asurascanz.com";
-  private cdnDomain = "asurascans.imagemanga.online";
 
   constructor() {
     super();
@@ -32,22 +31,31 @@ export class AsuraAdapter extends BaseSiteAdapter {
   }
 
   getImageUrlsFromPage(html: string): string[] {
-    const container = selectInner(html, "#readerarea");
-    if (!container) return [];
-    const imgs = findImages(container, true);
-    return imgs.map((u) => this.normalizeImageUrl(normalizeUrl(u, "https://asurascanz.com/")));
+    // Python: reader_area = soup.select_one('#readerarea'); for img in reader_area.find_all('img')
+    const readerArea = selectInner(html, "#readerarea");
+    if (!readerArea) return [];
+
+    // Python: url = img.get('data-src') or img.get('src') — preferDataSrc=true
+    const imgs = findImages(readerArea, true);
+    return imgs.map((u) => this._decodeAsuraUrl(u));
   }
 
   getAvailableChapters(html: string): ChapterInfo[] {
     const chapters: ChapterInfo[] = [];
     const seen = new Set<number>();
 
-    const links = findLinks(html, (href) => href.includes("chapter"));
+    // Python: chapter_list = soup.select('.eplister ul li a')
+    const links = selectLinks(html, ".eplister ul li a");
     for (const link of links) {
-      const num = extractChapterNumber(link.href);
+      // Python: chapter_num = extract_chapter_number(text); if None: extract_chapter_number(href)
+      const num = extractChapterNumber(link.text) || extractChapterNumber(link.href);
       if (num !== null && !seen.has(num)) {
         seen.add(num);
-        chapters.push({ number: num, url: link.href, title: link.text });
+        chapters.push({
+          number: num,
+          url: normalizeUrl(link.href, `https://asurascanz.com/`),
+          title: link.text,
+        });
       }
     }
 
@@ -59,6 +67,7 @@ export class AsuraAdapter extends BaseSiteAdapter {
   }
 
   private _decodeAsuraUrl(url: string): string {
+    // Python: decode asura's base64 encoded image URLs
     try {
       const u = new URL(url);
       const parts = u.pathname.split("/");

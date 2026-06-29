@@ -4,7 +4,7 @@ import {
   extractChapterNumber,
   normalizeUrl,
 } from "./base";
-import { attr, text, findImages, findLinks, selectInner } from "../html";
+import { selectInner, findImages, selectLinks, getAttr } from "../html";
 
 export class MadaraAdapter extends BaseSiteAdapter {
   readonly name = "Madara";
@@ -12,12 +12,16 @@ export class MadaraAdapter extends BaseSiteAdapter {
   protected mangaPath = "/manga/";
   protected chapterPattern = "chapter-{num}";
 
-  readSelectors = [
+  // Python: READ_CONTAINER_SELECTOR = ".read-container img"
+  //         READING_CONTENT_SELECTOR = ".reading-content .page-break img"
+  //         READER_AREA_SELECTOR = "#readerarea img"
+  //         CHAPTER_LIST_SELECTORS = [".listing-chapters_wrap li.wp-manga-chapter a", ".eph-num a"]
+  protected readSelectors = [
     ".read-container",
     ".reading-content .page-break",
     "#readerarea",
   ];
-  chapterSelectors = [
+  protected chapterSelectors = [
     ".listing-chapters_wrap li.wp-manga-chapter a",
     ".eph-num a",
   ];
@@ -44,11 +48,15 @@ export class MadaraAdapter extends BaseSiteAdapter {
   }
 
   getImageUrlsFromPage(html: string): string[] {
+    // Python: for selector in selectors: img_tags = soup.select(selector)
     for (const sel of this.readSelectors) {
       const container = selectInner(html, sel);
       if (container) {
+        // Python: url = img.get('data-src') or img.get('src') — preferDataSrc=true
         const imgs = findImages(container, true);
-        if (imgs.length > 0) return imgs.map((u) => normalizeUrl(u, `https://${this.domain}/`));
+        if (imgs.length > 0) {
+          return imgs.map((u) => normalizeUrl(u, `https://${this.domain}/`));
+        }
       }
     }
     return [];
@@ -58,15 +66,19 @@ export class MadaraAdapter extends BaseSiteAdapter {
     const chapters: ChapterInfo[] = [];
     const seen = new Set<number>();
 
+    // Python: for selector in selectors: chapter_links = soup.select(selector)
     for (const sel of this.chapterSelectors) {
-      const links = findLinks(html, (href) => {
-        return href.includes("chapter") || /ch[\s.]*/i.test(href);
-      });
+      const links = selectLinks(html, sel);
       for (const link of links) {
+        // Python: chapter_num = extract_chapter_number(href); if None: extract_chapter_number(text)
         const num = extractChapterNumber(link.href) || extractChapterNumber(link.text);
         if (num !== null && !seen.has(num)) {
           seen.add(num);
-          chapters.push({ number: num, url: link.href, title: link.text });
+          chapters.push({
+            number: num,
+            url: normalizeUrl(link.href, `https://${this.domain}/`),
+            title: link.text,
+          });
         }
       }
       if (chapters.length > 0) break;
