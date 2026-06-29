@@ -28,7 +28,7 @@ function MangaImage({ uri, width, dims }: { uri: string; width: number; dims?: {
   return (
     <Image
       source={{ uri, cache: "reload" }}
-      style={{ width, height, marginBottom: 2 }}
+      style={{ width, height }}
       resizeMode="contain"
     />
   );
@@ -168,7 +168,7 @@ export default function ReaderScreen() {
         <TouchableOpacity
           activeOpacity={1}
           onPress={() => setShowUI((v) => !v)}
-          style={{ alignItems: "center", paddingVertical: 4 }}
+          style={{ alignItems: "center" }}
         >
           {imageUris.map((uri, i) => (
             <MangaImage
