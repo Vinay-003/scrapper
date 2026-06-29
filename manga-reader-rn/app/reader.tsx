@@ -24,8 +24,11 @@ function dist(a: { pageX: number; pageY: number }, b: { pageX: number; pageY: nu
 }
 
 function MangaImage({ uri, width, dims }: { uri: string; width: number; dims?: { w: number; h: number } }) {
-  const height = dims ? (width * dims.h) / dims.w : width * 1.5;
-  return <Image source={{ uri, cache: "reload" }} style={{ width, height }} resizeMode="contain" />;
+  if (!dims || dims.w === 0) {
+    return <Image source={{ uri, cache: "reload" }} style={{ width, minHeight: 200 }} resizeMode="contain" />;
+  }
+  const height = (width * dims.h) / dims.w;
+  return <Image source={{ uri, cache: "reload" }} style={{ width, height }} resizeMode="cover" />;
 }
 
 export default function ReaderScreen() {
