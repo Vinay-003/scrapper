@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -25,11 +25,13 @@ function dist(a: { pageX: number; pageY: number }, b: { pageX: number; pageY: nu
 
 function MangaImage({ uri, width, dims }: { uri: string; width: number; dims?: { w: number; h: number } }) {
   if (!dims || dims.w === 0) {
-    return <Image source={{ uri, cache: "reload" }} style={{ width, minHeight: 200 }} resizeMode="contain" />;
+    return <Image source={{ uri }} style={{ width, minHeight: 200 }} resizeMode="contain" />;
   }
   const height = (width * dims.h) / dims.w;
-  return <Image source={{ uri, cache: "reload" }} style={{ width, height }} resizeMode="cover" />;
+  return <Image source={{ uri }} style={{ width, height }} resizeMode="cover" />;
 }
+
+const MemoizedMangaImage = MangaImage;
 
 export default function ReaderScreen() {
   const { slug, chapter } = useLocalSearchParams<{ slug: string; chapter: string }>();
@@ -38,18 +40,20 @@ export default function ReaderScreen() {
   const [imageNames, setImageNames] = useState<string[]>([]);
   const [imageSizes, setImageSizes] = useState<Record<string, { w: number; h: number }>>({});
   const [loading, setLoading] = useState(true);
-  const [progress, setProgress] = useState(0);
   const [showUI, setShowUI] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [panX, setPanX] = useState(0);
   const [panY, setPanY] = useState(0);
   const [zoomStep, setZoomStep] = useState(5);
   const [showStepPicker, setShowStepPicker] = useState(false);
+  const [progressPct, setProgressPct] = useState(0);
   const colors = t();
   const chapterNum = parseFloat(chapter!);
 
   const scrollRef = useRef<ScrollView>(null);
   const scrollYRef = useRef(0);
+  const progressRef = useRef(0);
+  const lastProgressUpdate = useRef(0);
   const gestureRef = useRef({
     initialDist: 0,
     baseZoom: 1,
@@ -64,6 +68,7 @@ export default function ReaderScreen() {
     scrollWasEnabled: true,
   });
   const overshootRef = useRef(0);
+  const gestureActiveRef = useRef(false);
 
   useEffect(() => {
     (async () => {
@@ -74,19 +79,22 @@ export default function ReaderScreen() {
       setZoom(1);
       setPanX(0);
       setPanY(0);
+      setProgressPct(0);
+      progressRef.current = 0;
+      lastProgressUpdate.current = 0;
       scrollYRef.current = 0;
       overshootRef.current = 0;
       gestureRef.current.mode = "none";
+      gestureActiveRef.current = false;
 
       const data = await getChapterImages(slug!, chapterNum);
       if (data) {
         setImageNames(data.images);
         setImageSizes(data.sizes);
 
-        // Resolve file URIs for each image
         const uris: string[] = [];
         for (const name of data.images) {
-          const uri = await getImageFileUri(slug!, chapterNum, name);
+          const uri = getImageFileUri(slug!, chapterNum, name);
           uris.push(uri || "");
         }
         setImageUris(uris);
@@ -101,61 +109,63 @@ export default function ReaderScreen() {
   };
 
   const onTouchStart = (e: GestureResponderEvent) => {
-    const t = e.nativeEvent.touches;
-    if (!t || t.length === 0) return;
-    gestureRef.current.touchStartX = t[0].pageX;
-    gestureRef.current.touchStartY = t[0].pageY;
+    const t2 = e.nativeEvent.touches;
+    if (!t2 || t2.length === 0) return;
+    gestureRef.current.touchStartX = t2[0].pageX;
+    gestureRef.current.touchStartY = t2[0].pageY;
 
-    if (t.length === 2) {
+    if (t2.length === 2) {
       gestureRef.current.scrollWasEnabled = zoom <= 1;
-      gestureRef.current.initialDist = dist(t[0], t[1]);
+      gestureRef.current.initialDist = dist(t2[0], t2[1]);
       gestureRef.current.baseZoom = zoom;
       gestureRef.current.basePanX = panX;
       gestureRef.current.basePanY = panY;
       gestureRef.current.baseScrollY = scrollYRef.current;
       gestureRef.current.mode = "pinch";
+      gestureActiveRef.current = true;
       try { scrollRef.current?.setNativeProps({ scrollEnabled: false }); } catch {}
-    } else if (t.length === 1 && zoom > 1) {
-      gestureRef.current.panStartX = t[0].pageX;
-      gestureRef.current.panStartY = t[0].pageY;
+    } else if (t2.length === 1 && zoom > 1) {
+      gestureRef.current.panStartX = t2[0].pageX;
+      gestureRef.current.panStartY = t2[0].pageY;
       gestureRef.current.basePanX = panX;
       gestureRef.current.basePanY = panY;
       gestureRef.current.mode = "pan";
+      gestureActiveRef.current = true;
       try { scrollRef.current?.setNativeProps({ scrollEnabled: false }); } catch {}
     }
   };
 
   const onTouchMove = (e: GestureResponderEvent) => {
-    const t = e.nativeEvent.touches;
-    if (!t) return;
+    const t2 = e.nativeEvent.touches;
+    if (!t2 || !gestureActiveRef.current) return;
 
-    if (t.length === 2 && gestureRef.current.mode === "pinch") {
-      const d = dist(t[0], t[1]);
+    if (t2.length === 2 && gestureRef.current.mode === "pinch") {
+      const d = dist(t2[0], t2[1]);
       const newZoom = Math.max(0.5, Math.min(5, gestureRef.current.baseZoom * (d / gestureRef.current.initialDist)));
       const s = newZoom / gestureRef.current.baseZoom;
-      const fx = (t[0].pageX + t[1].pageX) / 2;
-      const fy = (t[0].pageY + t[1].pageY) / 2;
+      const fx = (t2[0].pageX + t2[1].pageX) / 2;
+      const fy = (t2[0].pageY + t2[1].pageY) / 2;
       const bsy = gestureRef.current.baseScrollY;
       setZoom(newZoom);
       setPanX(fx * (1 - s) + gestureRef.current.basePanX * s);
       setPanY((fy + bsy) * (1 - s) + gestureRef.current.basePanY * s);
-    } else if (t.length === 1 && gestureRef.current.mode === "pan") {
-      setPanX(gestureRef.current.basePanX + (t[0].pageX - gestureRef.current.panStartX));
-      setPanY(gestureRef.current.basePanY + (t[0].pageY - gestureRef.current.panStartY));
+    } else if (t2.length === 1 && gestureRef.current.mode === "pan") {
+      setPanX(gestureRef.current.basePanX + (t2[0].pageX - gestureRef.current.panStartX));
+      setPanY(gestureRef.current.basePanY + (t2[0].pageY - gestureRef.current.panStartY));
     }
   };
 
   const onTouchEnd = (e: GestureResponderEvent) => {
-    if (gestureRef.current.mode === "none" && zoom <= 1) {
+    if (!gestureActiveRef.current && zoom <= 1) {
       const dx = Math.abs(e.nativeEvent.pageX - gestureRef.current.touchStartX);
       const dy = Math.abs(e.nativeEvent.pageY - gestureRef.current.touchStartY);
       if (dx < 10 && dy < 10) setShowUI((v) => !v);
     }
-    const wasPinching = gestureRef.current.mode === "pinch";
-    const wasPanning = gestureRef.current.mode === "pan";
+    const wasActive = gestureActiveRef.current;
     gestureRef.current.mode = "none";
+    gestureActiveRef.current = false;
 
-    if (wasPinching || wasPanning) {
+    if (wasActive) {
       setTimeout(() => {
         if (zoom <= 1) {
           try { scrollRef.current?.setNativeProps({ scrollEnabled: true }); } catch {}
@@ -206,7 +216,23 @@ export default function ReaderScreen() {
     setPanY(0);
     overshootRef.current = 0;
     gestureRef.current.mode = "none";
+    gestureActiveRef.current = false;
     try { scrollRef.current?.setNativeProps({ scrollEnabled: true }); } catch {}
+  };
+
+  const handleScroll = (e: any) => {
+    scrollYRef.current = e.nativeEvent.contentOffset.y;
+    const now = Date.now();
+    if (now - lastProgressUpdate.current < 200) return;
+    lastProgressUpdate.current = now;
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+    if (contentSize.height > layoutMeasurement.height) {
+      const pct = Math.round((contentOffset.y / (contentSize.height - layoutMeasurement.height)) * 100);
+      if (pct !== progressRef.current) {
+        progressRef.current = pct;
+        setProgressPct(pct);
+      }
+    }
   };
 
   const zoomPct = Math.round(zoom * 100);
@@ -274,27 +300,25 @@ export default function ReaderScreen() {
         ref={scrollRef}
         style={s.scroll}
         scrollEnabled={zoom <= 1}
-        onScroll={(e) => {
-          scrollYRef.current = e.nativeEvent.contentOffset.y;
-          const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-          if (contentSize.height > layoutMeasurement.height) {
-            setProgress(Math.round((contentOffset.y / (contentSize.height - layoutMeasurement.height)) * 100));
-          }
-        }}
-        scrollEventThrottle={16}
+        onScroll={handleScroll}
+        scrollEventThrottle={200}
+        removeClippedSubviews={true}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
       >
-        <View style={{ alignItems: "center" }}>
+        <View style={s.imageContainer}>
           <View
-            style={{
-              transformOrigin: "top left" as any,
-              transform: [{ translateX: panX }, { translateY: panY }, { scale: zoom }],
-            }}
+            style={[
+              s.imageScaler,
+              {
+                transformOrigin: "top left" as any,
+                transform: [{ translateX: panX }, { translateY: panY }, { scale: zoom }],
+              },
+            ]}
           >
             {imageUris.map((uri, i) => (
-              <MangaImage
+              <MemoizedMangaImage
                 key={`${chapterNum}-${i}`}
                 uri={uri}
                 width={SCREEN.width}
@@ -310,7 +334,7 @@ export default function ReaderScreen() {
           <TouchableOpacity style={[s.navBtn, { backgroundColor: colors.bg3 }]} onPress={() => navigateChapter(-1)}>
             <Text style={[s.navBtnText, { color: colors.fg }]}>← Prev</Text>
           </TouchableOpacity>
-          <Text style={[s.progressText, { color: colors.fg3 }]}>{progress}%</Text>
+          <Text style={[s.progressText, { color: colors.fg3 }]}>{progressPct}%</Text>
           <TouchableOpacity style={[s.navBtn, { backgroundColor: colors.bg3 }]} onPress={() => navigateChapter(1)}>
             <Text style={[s.navBtnText, { color: colors.fg }]}>Next →</Text>
           </TouchableOpacity>
@@ -325,6 +349,8 @@ const s = StyleSheet.create({
   loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
   loadingText: { marginTop: 12, fontSize: 14, fontWeight: "500" },
   scroll: { flex: 1 },
+  imageContainer: { alignItems: "center" },
+  imageScaler: { },
   topBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingTop: 50, paddingHorizontal: 12, paddingBottom: 10, borderBottomWidth: 1,
