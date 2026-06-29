@@ -1,10 +1,10 @@
-import * as cheerio from "cheerio";
 import {
   BaseSiteAdapter,
   ChapterInfo,
   extractChapterNumber,
   normalizeUrl,
 } from "./base";
+import { findImages, findLinks, selectInner } from "../html";
 
 export class ThunderscansAdapter extends BaseSiteAdapter {
   readonly name = "Thunderscans";
@@ -35,7 +35,7 @@ export class ThunderscansAdapter extends BaseSiteAdapter {
   }
 
   getImageUrlsFromPage(html: string): string[] {
-    // Try to extract from ts_reader.run() JavaScript call
+    // Try ts_reader.run() JavaScript call first
     const tsMatch = html.match(/ts_reader\.run\(({.*?})\)/s);
     if (tsMatch) {
       try {
@@ -57,40 +57,23 @@ export class ThunderscansAdapter extends BaseSiteAdapter {
     }
 
     // Fallback: parse HTML
-    const $ = cheerio.load(html);
-    const urls: string[] = [];
-
-    $(".reading-content img, #readerarea img").each((_, el) => {
-      const src = $(el).attr("data-src") || $(el).attr("src") || "";
-      if (src && !src.startsWith("data:")) {
-        urls.push(normalizeUrl(src, "https://en-thunderscans.com/"));
-      }
-    });
-
-    return urls;
+    const container = selectInner(html, ".reading-content") || selectInner(html, "#readerarea");
+    if (!container) return [];
+    const imgs = findImages(container, true);
+    return imgs.map((u) => normalizeUrl(u, "https://en-thunderscans.com/"));
   }
 
   getAvailableChapters(html: string): ChapterInfo[] {
-    const $ = cheerio.load(html);
     const chapters: ChapterInfo[] = [];
     const seen = new Set<number>();
 
-    const selectors = [
-      '.chapter-list a[href*="chapter"]',
-      'a[href*="-chapter-"]',
-      ".version-chap a",
-    ];
-
-    for (const sel of selectors) {
-      $(sel).each((_, el) => {
-        const href = $(el).attr("href") || "";
-        const num = extractChapterNumber(href);
-        if (num !== null && !seen.has(num)) {
-          seen.add(num);
-          chapters.push({ number: num, url: href, title: $(el).text().trim() });
-        }
-      });
-      if (chapters.length > 0) break;
+    const links = findLinks(html, (href) => href.includes("chapter"));
+    for (const link of links) {
+      const num = extractChapterNumber(link.href) || extractChapterNumber(link.text);
+      if (num !== null && !seen.has(num)) {
+        seen.add(num);
+        chapters.push({ number: num, url: link.href, title: link.text });
+      }
     }
 
     return chapters;
@@ -122,8 +105,6 @@ export class RoliascanAdapter extends BaseSiteAdapter {
   }
 
   getChapterUrl(_mangaSlug: string, _chapterNumber: number): string {
-    // Chapter URLs require an ID that can't be predicted.
-    // Return manga page as fallback; actual chapter URLs come from getAvailableChapters.
     return this.getMangaUrl(_mangaSlug);
   }
 
@@ -141,18 +122,17 @@ export class RoliascanAdapter extends BaseSiteAdapter {
   }
 
   getAvailableChapters(html: string): ChapterInfo[] {
-    const $ = cheerio.load(html);
     const chapters: ChapterInfo[] = [];
     const seen = new Set<number>();
 
-    $('a[href*="/read/"]').each((_, el) => {
-      const href = $(el).attr("href") || "";
-      const num = extractChapterNumber(href) || extractChapterNumber($(el).text());
+    const links = findLinks(html, (href) => href.includes("/read/"));
+    for (const link of links) {
+      const num = extractChapterNumber(link.href) || extractChapterNumber(link.text);
       if (num !== null && !seen.has(num)) {
         seen.add(num);
-        chapters.push({ number: num, url: href, title: $(el).text().trim() });
+        chapters.push({ number: num, url: link.href, title: link.text });
       }
-    });
+    }
 
     return chapters;
   }

@@ -1,10 +1,10 @@
-import * as cheerio from "cheerio";
 import {
   BaseSiteAdapter,
   ChapterInfo,
   extractChapterNumber,
   normalizeUrl,
 } from "./base";
+import { attr, text, findImages, findLinks, selectInner } from "../html";
 
 export class MadaraAdapter extends BaseSiteAdapter {
   readonly name = "Madara";
@@ -13,9 +13,9 @@ export class MadaraAdapter extends BaseSiteAdapter {
   protected chapterPattern = "chapter-{num}";
 
   readSelectors = [
-    ".read-container img",
-    ".reading-content .page-break img",
-    "#readerarea img",
+    ".read-container",
+    ".reading-content .page-break",
+    "#readerarea",
   ];
   chapterSelectors = [
     ".listing-chapters_wrap li.wp-manga-chapter a",
@@ -44,37 +44,31 @@ export class MadaraAdapter extends BaseSiteAdapter {
   }
 
   getImageUrlsFromPage(html: string): string[] {
-    const $ = cheerio.load(html);
-    const urls: string[] = [];
-
     for (const sel of this.readSelectors) {
-      $(sel).each((_, el) => {
-        let src = $(el).attr("data-src") || $(el).attr("src") || "";
-        if (src && !src.startsWith("data:")) {
-          src = normalizeUrl(src, `https://${this.domain}/`);
-          urls.push(src);
-        }
-      });
-      if (urls.length > 0) break;
+      const container = selectInner(html, sel);
+      if (container) {
+        const imgs = findImages(container, true);
+        if (imgs.length > 0) return imgs.map((u) => normalizeUrl(u, `https://${this.domain}/`));
+      }
     }
-
-    return urls;
+    return [];
   }
 
   getAvailableChapters(html: string): ChapterInfo[] {
-    const $ = cheerio.load(html);
     const chapters: ChapterInfo[] = [];
     const seen = new Set<number>();
 
     for (const sel of this.chapterSelectors) {
-      $(sel).each((_, el) => {
-        const href = $(el).attr("href") || "";
-        const num = extractChapterNumber(href) || extractChapterNumber($(el).text());
+      const links = findLinks(html, (href) => {
+        return href.includes("chapter") || /ch[\s.]*/i.test(href);
+      });
+      for (const link of links) {
+        const num = extractChapterNumber(link.href) || extractChapterNumber(link.text);
         if (num !== null && !seen.has(num)) {
           seen.add(num);
-          chapters.push({ number: num, url: href, title: $(el).text().trim() });
+          chapters.push({ number: num, url: link.href, title: link.text });
         }
-      });
+      }
       if (chapters.length > 0) break;
     }
 
@@ -101,7 +95,7 @@ export class ManhwaTopAdapter extends MadaraAdapter {
 export class ManhuascanAdapter extends MadaraAdapter {
   constructor() {
     super("manhuascan.us", "Manhuascan");
-    this.readSelectors = ["#readerarea img"];
+    this.readSelectors = ["#readerarea"];
   }
 }
 

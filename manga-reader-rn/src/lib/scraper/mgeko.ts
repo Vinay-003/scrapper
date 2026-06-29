@@ -1,10 +1,9 @@
-import * as cheerio from "cheerio";
 import {
   BaseSiteAdapter,
   ChapterInfo,
   extractChapterNumber,
-  normalizeUrl,
 } from "./base";
+import { findImages, findLinks, selectInner, attr, text } from "../html";
 
 export class MgekoAdapter extends BaseSiteAdapter {
   readonly name = "Mgeko";
@@ -32,12 +31,11 @@ export class MgekoAdapter extends BaseSiteAdapter {
       try {
         const resp = await fetch(url, { headers: this.headers });
         const html = await resp.text();
-        const $ = cheerio.load(html);
-        const link = $('h1 a[href*="/manga/"]').attr("href") || "";
-        const m = link.match(/\/manga\/([^/]+)/);
-        if (m) return m[1];
+        // Find <h1><a href="/manga/SLUG/"> inside the page
+        const h1Match = html.match(/<h1[^>]*>\s*<a[^>]*href="\/manga\/([^"\/]+)\/"[^>]*>/i);
+        if (h1Match) return h1Match[1];
       } catch {
-        // Fall through to return the original slug
+        // Fall through
       }
     }
 
@@ -53,44 +51,42 @@ export class MgekoAdapter extends BaseSiteAdapter {
   }
 
   getImageUrlsFromPage(html: string): string[] {
-    const $ = cheerio.load(html);
-    const urls: string[] = [];
-
-    $("#chapter-reader img").each((_, el) => {
-      const src = $(el).attr("src") || "";
-      if (src && src.includes("imgsrv4.com") && !this._isCreditsImage(src)) {
-        urls.push(src);
-      }
-    });
-
-    return urls;
+    const container = selectInner(html, "#chapter-reader");
+    if (!container) return [];
+    const imgs = findImages(container, false);
+    return imgs.filter((u) => u.includes("imgsrv4.com") && !this._isCreditsImage(u));
   }
 
   getAvailableChapters(html: string): ChapterInfo[] {
-    const $ = cheerio.load(html);
     const chapters: ChapterInfo[] = [];
     const seen = new Set<number>();
 
-    // Try chapter list first
-    $('ul.chapter-list li a, a[href*="chapter"]').each((_, el) => {
-      const href = $(el).attr("href") || "";
-      const num = extractChapterNumber(href);
+    // Try chapter list
+    const links = findLinks(html, (href) => href.includes("chapter"));
+    for (const link of links) {
+      const num = extractChapterNumber(link.href) || extractChapterNumber(link.text);
       if (num !== null && !seen.has(num)) {
         seen.add(num);
-        chapters.push({ number: num, url: href, title: $(el).text().trim() });
+        chapters.push({ number: num, url: link.href, title: link.text });
       }
-    });
+    }
 
-    // Fallback to dropdown
+    // Fallback: find <select> dropdown with chapter options
     if (chapters.length === 0) {
-      $('#cars option, select option').each((_, el) => {
-        const val = $(el).attr("value") || "";
-        const num = extractChapterNumber(val) || extractChapterNumber($(el).text());
-        if (num !== null && !seen.has(num)) {
-          seen.add(num);
-          chapters.push({ number: num, url: val, title: $(el).text().trim() });
+      const selectMatch = html.match(/<select[^>]*id="cars"[^>]*>([\s\S]*?)<\/select>/i);
+      if (selectMatch) {
+        const optionRegex = /<option[^>]*value="([^"]*)"[^>]*>([^<]*)<\/option>/gi;
+        let m;
+        while ((m = optionRegex.exec(selectMatch[1])) !== null) {
+          const val = m[1];
+          const optText = m[2];
+          const num = extractChapterNumber(val) || extractChapterNumber(optText);
+          if (num !== null && !seen.has(num)) {
+            seen.add(num);
+            chapters.push({ number: num, url: val, title: optText });
+          }
         }
-      });
+      }
     }
 
     return chapters;

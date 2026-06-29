@@ -1,10 +1,10 @@
-import * as cheerio from "cheerio";
 import {
   BaseSiteAdapter,
   ChapterInfo,
   extractChapterNumber,
   normalizeUrl,
 } from "./base";
+import { findImages, findLinks, selectInner } from "../html";
 
 export class AsuraAdapter extends BaseSiteAdapter {
   readonly name = "AsuraScans";
@@ -32,33 +32,24 @@ export class AsuraAdapter extends BaseSiteAdapter {
   }
 
   getImageUrlsFromPage(html: string): string[] {
-    const $ = cheerio.load(html);
-    const urls: string[] = [];
-
-    $("#readerarea img").each((_, el) => {
-      let src = $(el).attr("data-src") || $(el).attr("src") || "";
-      if (src && !src.startsWith("data:")) {
-        src = this.normalizeImageUrl(normalizeUrl(src, "https://asurascanz.com/"));
-        urls.push(src);
-      }
-    });
-
-    return urls;
+    const container = selectInner(html, "#readerarea");
+    if (!container) return [];
+    const imgs = findImages(container, true);
+    return imgs.map((u) => this.normalizeImageUrl(normalizeUrl(u, "https://asurascanz.com/")));
   }
 
   getAvailableChapters(html: string): ChapterInfo[] {
-    const $ = cheerio.load(html);
     const chapters: ChapterInfo[] = [];
     const seen = new Set<number>();
 
-    $(".eplister ul li a").each((_, el) => {
-      const href = $(el).attr("href") || "";
-      const num = extractChapterNumber(href);
+    const links = findLinks(html, (href) => href.includes("chapter"));
+    for (const link of links) {
+      const num = extractChapterNumber(link.href);
       if (num !== null && !seen.has(num)) {
         seen.add(num);
-        chapters.push({ number: num, url: href, title: $(el).text().trim() });
+        chapters.push({ number: num, url: link.href, title: link.text });
       }
-    });
+    }
 
     return chapters;
   }
