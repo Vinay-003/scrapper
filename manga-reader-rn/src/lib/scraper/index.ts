@@ -143,29 +143,39 @@ async function runScraperJob(job: ScraperJob): Promise<void> {
 
   // Get manga page and chapter list
   const mangaUrl = adapter.getMangaUrl(slug);
+  addLog(job, `Fetching manga page: ${mangaUrl}`);
   let chapters: ChapterInfo[] = [];
   try {
     const resp = await fetchWithTimeout(mangaUrl, { headers: adapter["headers"] });
+    addLog(job, `Manga page status: ${resp.status}`);
     if (resp.ok) {
       const html = await resp.text();
+      addLog(job, `Manga page HTML length: ${html.length}`);
       chapters = adapter.getAvailableChapters(html);
+      addLog(job, `Chapters from main page: ${chapters.length}`);
+    } else {
+      addLog(job, `Manga page returned ${resp.status}`);
     }
-  } catch {
-    // Try all chapters URL if available
+  } catch (err: any) {
+    addLog(job, `Manga page fetch error: ${err.message}`);
   }
 
   // Fallback to all chapters page
   if (chapters.length === 0) {
     const allUrl = adapter.getAllChaptersUrl(slug);
     if (allUrl) {
+      addLog(job, `Trying all chapters page: ${allUrl}`);
       try {
         const resp = await fetchWithTimeout(allUrl, { headers: adapter["headers"] });
+        addLog(job, `All chapters page status: ${resp.status}`);
         if (resp.ok) {
           const html = await resp.text();
+          addLog(job, `All chapters HTML length: ${html.length}`);
           chapters = adapter.getAvailableChapters(html);
+          addLog(job, `Chapters from all-chapters page: ${chapters.length}`);
         }
-      } catch {
-        // Continue with empty chapters
+      } catch (err: any) {
+        addLog(job, `All chapters page error: ${err.message}`);
       }
     }
   }
