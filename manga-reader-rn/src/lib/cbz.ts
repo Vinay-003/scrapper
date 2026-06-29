@@ -89,9 +89,7 @@ export async function saveChapterImages(
     const padded = String(i + 1).padStart(4, "0");
     const file = new File(chDir, `${padded}.${ext}`);
 
-    // Convert Uint8Array to base64 and write
-    const base64 = uint8ArrayToBase64(images[i].data);
-    await file.write(base64);
+    file.write(images[i].data);
   }
 
   return chDir.uri;
@@ -132,10 +130,4 @@ function getExtension(name: string): string {
   return ext;
 }
 
-function uint8ArrayToBase64(arr: Uint8Array): string {
-  let binary = "";
-  for (let i = 0; i < arr.length; i++) {
-    binary += String.fromCharCode(arr[i]);
-  }
-  return btoa(binary);
-}
+
