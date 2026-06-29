@@ -24,11 +24,28 @@ function dist(a: { pageX: number; pageY: number }, b: { pageX: number; pageY: nu
 }
 
 function MangaImage({ uri, width, dims }: { uri: string; width: number; dims?: { w: number; h: number } }) {
-  if (!dims || dims.w === 0) {
-    return <Image source={{ uri }} style={{ width, minHeight: 200 }} resizeMode="contain" />;
+  const [measured, setMeasured] = useState<{ w: number; h: number } | null>(null);
+  const hasDims = dims && dims.w > 0;
+  const finalDims = hasDims ? dims! : measured;
+
+  if (!finalDims) {
+    return <Image source={{ uri }} style={{ width, aspectRatio: 2 / 3 }} resizeMode="contain" />;
   }
-  const height = (width * dims.h) / dims.w;
-  return <Image source={{ uri }} style={{ width, height }} resizeMode="contain" />;
+  const height = (width * finalDims.h) / finalDims.w;
+  return (
+    <Image
+      source={{ uri }}
+      style={{ width, height }}
+      resizeMode="contain"
+      onLoad={(e: any) => {
+        const w = e.source?.width;
+        const h = e.source?.height;
+        if (w > 0 && h > 0 && !hasDims && !measured) {
+          setMeasured({ w, h });
+        }
+      }}
+    />
+  );
 }
 
 const MemoizedMangaImage = MangaImage;
