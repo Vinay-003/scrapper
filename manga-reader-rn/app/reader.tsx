@@ -17,16 +17,29 @@ import { t, isDark } from "../src/lib/theme";
 import { saveRecentlyRead } from "../src/lib/storage";
 
 const SCREEN = Dimensions.get("window");
-const MANGA_ASPECT = 2 / 3;
 
 function getDistance(t1: { pageX: number; pageY: number }, t2: { pageX: number; pageY: number }) {
   return Math.sqrt((t1.pageX - t2.pageX) ** 2 + (t1.pageY - t2.pageY) ** 2);
+}
+
+function MangaImage({ uri, width, dims }: { uri: string; width: number; dims?: { w: number; h: number } }) {
+  const height = dims ? (width * dims.h) / dims.w : width * 1.5;
+
+  return (
+    <Image
+      source={{ uri, cache: "reload" }}
+      style={{ width, height, marginBottom: 2 }}
+      resizeMode="contain"
+    />
+  );
 }
 
 export default function ReaderScreen() {
   const { slug, chapter } = useLocalSearchParams<{ slug: string; chapter: string }>();
   const router = useRouter();
   const [imageUris, setImageUris] = useState<string[]>([]);
+  const [imageNames, setImageNames] = useState<string[]>([]);
+  const [imageSizes, setImageSizes] = useState<Record<string, { w: number; h: number }>>({});
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState(0);
   const [showUI, setShowUI] = useState(true);
@@ -42,17 +55,24 @@ export default function ReaderScreen() {
     (async () => {
       setLoading(true);
       setImageUris([]);
+      setImageNames([]);
+      setImageSizes({});
       setPinchScale(1);
       setBtnZoom(1);
       pinchRef.current = { initialDist: 0, baseScale: 1, active: false };
       const data = await api(`/api/manga/${safeSlug}/chapter/${chapterNum}`);
       if (data?.images) {
         const base = await getApiBase();
+        const ts = Date.now();
+        setImageNames(data.images);
         setImageUris(
           data.images.map((name: string) =>
-            `${base}/api/manga/${safeSlug}/chapter/${chapterNum}/image/${encodeURIComponent(name)}`
+            `${base}/api/manga/${safeSlug}/chapter/${chapterNum}/image/${encodeURIComponent(name)}?_v=${ts}`
           )
         );
+        if (data.sizes) {
+          setImageSizes(data.sizes);
+        }
       }
       setLoading(false);
       saveRecentlyRead(slug!, chapterNum);
@@ -151,11 +171,11 @@ export default function ReaderScreen() {
           style={{ alignItems: "center", paddingVertical: 4 }}
         >
           {imageUris.map((uri, i) => (
-            <Image
+            <MangaImage
               key={`${chapterNum}-${i}`}
-              source={{ uri }}
-              style={{ width: imgWidth, height: imgWidth * MANGA_ASPECT, marginBottom: 2 }}
-              resizeMode="contain"
+              uri={uri}
+              width={imgWidth}
+              dims={imageSizes[imageNames[i]]}
             />
           ))}
         </TouchableOpacity>

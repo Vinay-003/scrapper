@@ -42,6 +42,7 @@ tracking = load_json(TRACKING_FILE, {})
 comments = load_json(COMMENTS_FILE, {})
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+MAX_IMAGE_HEIGHT = 2000
 
 
 def find_cbz_files(manga_dir):
@@ -59,10 +60,44 @@ def find_cbz_files(manga_dir):
     return chapters
 
 
-def get_images_from_cbz(cbz_path):
-    """Extract image filenames from a CBZ archive."""
+def get_image_list_from_cbz(cbz_path):
+    """Get image list with auto-segmentation for tall images.
+
+    Returns (images, sizes) where images is a list of display entries.
+    Tall images are split into segments like "0002.jpg:s0", "0002.jpg:s1".
+    Sizes dict maps each display name to its display {w, h}.
+    """
     images = []
+    sizes = {}
     try:
+        from PIL import Image
+        import io
+        with zipfile.ZipFile(cbz_path, "r") as zf:
+            for name in sorted(zf.namelist()):
+                lower = name.lower()
+                if not (lower.endswith(IMAGE_EXTS) and not lower.startswith("__")):
+                    continue
+                try:
+                    data = zf.read(name)
+                    img = Image.open(io.BytesIO(data))
+                    w, h = img.size
+                except Exception:
+                    images.append(name)
+                    continue
+
+                if h <= MAX_IMAGE_HEIGHT:
+                    images.append(name)
+                    sizes[name] = {"w": w, "h": h}
+                else:
+                    num_segments = (h + MAX_IMAGE_HEIGHT - 1) // MAX_IMAGE_HEIGHT
+                    for seg in range(num_segments):
+                        seg_name = f"{name}:s{seg}"
+                        seg_top = seg * MAX_IMAGE_HEIGHT
+                        seg_bottom = min((seg + 1) * MAX_IMAGE_HEIGHT, h)
+                        seg_h = seg_bottom - seg_top
+                        images.append(seg_name)
+                        sizes[seg_name] = {"w": w, "h": seg_h}
+    except ImportError:
         with zipfile.ZipFile(cbz_path, "r") as zf:
             for name in sorted(zf.namelist()):
                 lower = name.lower()
@@ -70,7 +105,63 @@ def get_images_from_cbz(cbz_path):
                     images.append(name)
     except Exception as e:
         print(f"Error reading {cbz_path}: {e}")
-    return images
+    return images, sizes
+
+
+def read_image_segment_from_cbz(cbz_path, image_name):
+    """Read an image or a segment of an image from a CBZ archive.
+
+    image_name can be:
+      - "0001.jpg"         -> full image
+      - "0002.jpg:s0"      -> first 4000px of a tall image
+      - "0002.jpg:s3"      -> fourth segment, etc.
+    """
+    from PIL import Image
+    import io
+
+    seg_index = None
+    raw_name = image_name
+    if ":s" in image_name:
+        parts = image_name.rsplit(":s", 1)
+        raw_name = parts[0]
+        try:
+            seg_index = int(parts[1])
+        except ValueError:
+            pass
+
+    try:
+        with zipfile.ZipFile(cbz_path, "r") as zf:
+            data = zf.read(raw_name)
+    except Exception:
+        return None, "image/jpeg"
+
+    if seg_index is None:
+        ct = _detect_content_type(data)
+        return data, ct
+
+    try:
+        img = Image.open(io.BytesIO(data))
+        w, h = img.size
+        top = seg_index * MAX_IMAGE_HEIGHT
+        bottom = min((seg_index + 1) * MAX_IMAGE_HEIGHT, h)
+        segment = img.crop((0, top, w, bottom))
+        buf = io.BytesIO()
+        segment.save(buf, format="PNG")
+        return buf.getvalue(), "image/png"
+    except Exception:
+        return data, _detect_content_type(data)
+
+
+def _detect_content_type(data):
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    elif data[:4] == b"GIF8":
+        return "image/gif"
+    elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    elif data[:2] == b"\xff\xd8":
+        return "image/jpeg"
+    return "image/jpeg"
 
 
 def read_image_from_cbz(cbz_path, image_name):
@@ -146,11 +237,12 @@ async def get_chapter(slug: str, chapter_num: float, path: Optional[str] = None)
     if not cbz_path.is_file():
         raise HTTPException(404, f"Chapter file not found: {cbz_name}")
 
-    images = get_images_from_cbz(cbz_path)
+    images, sizes = get_image_list_from_cbz(cbz_path)
     return {
         "chapter": chapter_num,
         "slug": slug,
         "images": images,
+        "sizes": sizes,
         "total": len(images),
     }
 
@@ -163,17 +255,15 @@ async def get_image(slug: str, chapter_num: float, image_name: str, path: Option
     if not cbz_path.is_file():
         raise HTTPException(404, "Chapter not found")
 
-    data = read_image_from_cbz(cbz_path, image_name)
+    try:
+        data, ct = read_image_segment_from_cbz(cbz_path, image_name)
+    except Exception:
+        raise HTTPException(404, "Image not found")
+
     if data is None:
         raise HTTPException(404, "Image not found")
 
-    ext = image_name.lower().rsplit(".", 1)[-1] if "." in image_name else "jpeg"
-    content_types = {
-        "jpg": "image/jpeg", "jpeg": "image/jpeg",
-        "png": "image/png", "webp": "image/webp", "gif": "image/gif",
-    }
-    ct = content_types.get(ext, "image/jpeg")
-    return Response(content=data, media_type=ct)
+    return Response(content=data, media_type=ct, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/manga/{slug}/progress")
