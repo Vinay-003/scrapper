@@ -24,7 +24,6 @@ function getDistance(t1: { pageX: number; pageY: number }, t2: { pageX: number; 
 
 function MangaImage({ uri, width, dims }: { uri: string; width: number; dims?: { w: number; h: number } }) {
   const height = dims ? (width * dims.h) / dims.w : width * 1.5;
-
   return (
     <Image
       source={{ uri, cache: "reload" }}
@@ -50,17 +49,17 @@ export default function ReaderScreen() {
   const chapterNum = parseFloat(chapter!);
   const safeSlug = encodeSlug(slug || "");
 
+  const scrollYRef = useRef(0);
   const gestureRef = useRef({
     initialDist: 0,
     baseZoom: 1,
-    panStartX: 0,
-    panStartY: 0,
     basePanX: 0,
     basePanY: 0,
+    panStartX: 0,
+    panStartY: 0,
     mode: "none" as "none" | "pinch" | "pan",
     touchStartX: 0,
     touchStartY: 0,
-    tapTimer: null as ReturnType<typeof setTimeout> | null,
   });
 
   useEffect(() => {
@@ -72,6 +71,7 @@ export default function ReaderScreen() {
       setZoom(1);
       setPanX(0);
       setPanY(0);
+      scrollYRef.current = 0;
       gestureRef.current.mode = "none";
       const data = await api(`/api/manga/${safeSlug}/chapter/${chapterNum}`);
       if (data?.images) {
@@ -96,91 +96,84 @@ export default function ReaderScreen() {
     router.replace({ pathname: "/reader", params: { slug: slug!, chapter: chapterNum + delta } });
   };
 
-  const constrainPan = useCallback((z: number, px: number, py: number) => {
-    const maxPx = SCREEN.width * (z - 1) / 2;
-    const clampedX = Math.max(-maxPx, Math.min(maxPx, px));
-    return { x: maxPx > 0 ? clampedX : 0, y: py };
-  }, []);
+  const clampZoom = (z: number) => Math.max(0.5, Math.min(5, z));
 
   const onTouchStart = useCallback((e: GestureResponderEvent) => {
-    const touches = e.nativeEvent.touches;
-    gestureRef.current.touchStartX = touches[0]?.pageX || 0;
-    gestureRef.current.touchStartY = touches[0]?.pageY || 0;
+    const t = e.nativeEvent.touches;
+    if (!t) return;
+    gestureRef.current.touchStartX = t[0]?.pageX || 0;
+    gestureRef.current.touchStartY = t[0]?.pageY || 0;
 
-    if (touches.length === 2) {
-      const dist = getDistance(touches[0], touches[1]);
+    if (t.length === 2) {
       gestureRef.current = {
         ...gestureRef.current,
-        initialDist: dist,
+        initialDist: getDistance(t[0], t[1]),
         baseZoom: zoom,
+        basePanX: panX,
+        basePanY: panY,
         mode: "pinch",
-        tapTimer: null,
       };
-    } else if (touches.length === 1 && zoom > 1) {
+    } else if (t.length === 1 && zoom > 1) {
       gestureRef.current = {
         ...gestureRef.current,
-        panStartX: touches[0].pageX,
-        panStartY: touches[0].pageY,
+        panStartX: t[0].pageX,
+        panStartY: t[0].pageY,
         basePanX: panX,
         basePanY: panY,
         mode: "pan",
-        tapTimer: null,
       };
     }
   }, [zoom, panX, panY]);
 
   const onTouchMove = useCallback((e: GestureResponderEvent) => {
-    const touches = e.nativeEvent.touches;
-    if (touches.length === 2 && gestureRef.current.mode === "pinch") {
-      const dist = getDistance(touches[0], touches[1]);
-      const newZoom = Math.max(0.5, Math.min(5, gestureRef.current.baseZoom * (dist / gestureRef.current.initialDist)));
+    const t = e.nativeEvent.touches;
+    if (!t) return;
+
+    if (t.length === 2 && gestureRef.current.mode === "pinch") {
+      const dist = getDistance(t[0], t[1]);
+      const ratio = dist / gestureRef.current.initialDist;
+      const newZoom = clampZoom(gestureRef.current.baseZoom * ratio);
+      const scale = newZoom / gestureRef.current.baseZoom;
+
+      const fx = (t[0].pageX + t[1].pageX) / 2;
+      const fy = (t[0].pageY + t[1].pageY) / 2;
+
+      const newPanX = fx * (1 - scale) + gestureRef.current.basePanX * scale;
+      const newPanY = (fy + scrollYRef.current) * (1 - scale) + gestureRef.current.basePanY * scale;
+
       setZoom(newZoom);
-      const clamped = constrainPan(newZoom, panX, panY);
-      setPanX(clamped.x);
-      setPanY(clamped.y);
-    } else if (touches.length === 1 && gestureRef.current.mode === "pan") {
-      const dx = touches[0].pageX - gestureRef.current.panStartX;
-      const dy = touches[0].pageY - gestureRef.current.panStartY;
-      const clamped = constrainPan(zoom, gestureRef.current.basePanX + dx, gestureRef.current.basePanY + dy);
-      setPanX(clamped.x);
-      setPanY(clamped.y);
+      setPanX(newPanX);
+      setPanY(newPanY);
+    } else if (t.length === 1 && gestureRef.current.mode === "pan") {
+      const dx = t[0].pageX - gestureRef.current.panStartX;
+      const dy = t[0].pageY - gestureRef.current.panStartY;
+      setPanX(gestureRef.current.basePanX + dx);
+      setPanY(gestureRef.current.basePanY + dy);
     }
-  }, [zoom, panX, panY, constrainPan]);
+  }, []);
 
   const onTouchEnd = useCallback((e: GestureResponderEvent) => {
     if (gestureRef.current.mode === "none" && zoom <= 1) {
-      const dx = Math.abs((e.nativeEvent.changedTouches?.[0]?.pageX || 0) - gestureRef.current.touchStartX);
-      const dy = Math.abs((e.nativeEvent.changedTouches?.[0]?.pageY || 0) - gestureRef.current.touchStartY);
+      const dx = Math.abs(e.nativeEvent.pageX - gestureRef.current.touchStartX);
+      const dy = Math.abs(e.nativeEvent.pageY - gestureRef.current.touchStartY);
       if (dx < 10 && dy < 10) {
         setShowUI((v) => !v);
       }
     }
-    setTimeout(() => {
-      gestureRef.current.mode = "none";
-    }, 50);
+    setTimeout(() => { gestureRef.current.mode = "none"; }, 50);
   }, [zoom]);
 
-  const zoomIn = () => {
-    const z = Math.min(3, zoom + 0.5);
-    setZoom(z);
-    const clamped = constrainPan(z, panX, panY);
-    setPanX(clamped.x);
-    setPanY(clamped.y);
-  };
-
+  const zoomIn = () => setZoom((z) => clampZoom(z + 0.5));
   const zoomOut = () => {
-    const z = Math.max(0.5, zoom - 0.5);
-    setZoom(z);
-    if (z <= 1) {
-      setPanX(0);
-      setPanY(0);
-    } else {
-      const clamped = constrainPan(z, panX, panY);
-      setPanX(clamped.x);
-      setPanY(clamped.y);
-    }
+    setZoom((z) => {
+      const nz = clampZoom(z - 0.5);
+      if (nz <= 1) {
+        setPanX(0);
+        setPanY(0);
+      }
+      return nz;
+    });
   };
-
   const resetZoom = () => {
     setZoom(1);
     setPanX(0);
@@ -188,7 +181,7 @@ export default function ReaderScreen() {
     gestureRef.current.mode = "none";
   };
 
-  const scrollEnabled = zoom <= 1 && panX === 0;
+  const scrollEnabled = zoom <= 1;
 
   if (loading) {
     return (
@@ -231,6 +224,7 @@ export default function ReaderScreen() {
         style={s.scroll}
         scrollEnabled={scrollEnabled}
         onScroll={(e) => {
+          scrollYRef.current = e.nativeEvent.contentOffset.y;
           const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
           if (contentSize.height > layoutMeasurement.height) {
             setProgress(Math.round((contentOffset.y / (contentSize.height - layoutMeasurement.height)) * 100));
@@ -241,11 +235,7 @@ export default function ReaderScreen() {
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
       >
-        <TouchableOpacity
-          activeOpacity={1}
-          onPress={() => {}}
-          style={{ alignItems: "center" }}
-        >
+        <View style={{ alignItems: "center" }}>
           <View
             style={{
               transform: [
@@ -264,7 +254,7 @@ export default function ReaderScreen() {
               />
             ))}
           </View>
-        </TouchableOpacity>
+        </View>
       </ScrollView>
 
       {showUI && (
