@@ -56,6 +56,41 @@ class MgekoAdapter(BaseSiteAdapter):
         
         return None
     
+    async def resolve_manga_slug(self, session, url: str) -> Optional[str]:
+        """Resolve correct manga slug from any URL.
+        
+        Chapter URLs like /reader/en/{slug}-chapter-1-eng-li/ have a different
+        slug than the manga page (e.g., sword-sheath-s-child vs sword-sheath-s-child-mg1).
+        Fetch the chapter page and extract the manga link from <h1><a href="/manga/{slug}/">.
+        """
+        parsed = urlparse(url)
+        
+        # Only need to resolve if it's a reader URL
+        if '/reader/' not in parsed.path:
+            return self.get_manga_slug(url)
+        
+        try:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    return self.get_manga_slug(url)
+                html = await resp.text()
+            
+            soup = BeautifulSoup(html, 'html.parser')
+            # The chapter page has <h1><a href="/manga/{slug}/">
+            h1 = soup.find('h1')
+            if h1:
+                a = h1.find('a')
+                if a:
+                    href = a.get('href', '')
+                    if '/manga/' in href:
+                        slug = href.split('/manga/')[-1].strip('/')
+                        if slug:
+                            return slug
+        except Exception:
+            pass
+        
+        return self.get_manga_slug(url)
+    
     def get_manga_url(self, slug: str) -> str:
         """Get manga page URL from slug"""
         return f"https://{self.domain}/manga/{slug}/"
@@ -82,7 +117,6 @@ class MgekoAdapter(BaseSiteAdapter):
         # Find the chapter reader container
         reader = soup.find('div', id='chapter-reader')
         if not reader:
-            # Fallback: find all img tags in the page
             reader = soup
         
         for img in reader.find_all('img'):
@@ -93,13 +127,11 @@ class MgekoAdapter(BaseSiteAdapter):
             src = normalize_url(src, f"https://{self.domain}")
             
             # Skip credits/watermark images
-            if 'credits' in src.lower() or 'mgeko' in src.lower() and 'credits' in src.lower():
-                continue
             if imgsrv4_url_is_credits(src):
                 continue
             
-            # Only include actual manga page images
-            if 'imgsrv4.com' in src or '/sv2/' in src or '/comic/' in src:
+            # Only include actual manga page images (imgsrv4.com CDN)
+            if 'imgsrv4.com' in src:
                 images.append(src)
         
         return images
@@ -181,15 +213,8 @@ class MgekoAdapter(BaseSiteAdapter):
 
 
 def imgsrv4_url_is_credits(url: str) -> bool:
-    """Check if an imgsrv4.com URL is a credits/watermark image"""
-    # Credits images are typically: credits-mgeko.png, credits.png, etc.
-    # Page images follow: /sv2/comic/{manga}/chapter-{N}/{page}.jpg
-    if 'imgsrv4.com' in url:
-        # If it doesn't match the manga page pattern, it's likely a credits image
-        if '/sv2/comic/' not in url:
-            return True
-        # Explicit credits filenames
-        lower = url.lower()
-        if 'credits' in lower or 'watermark' in lower or 'logo' in lower:
-            return True
+    """Check if an imgsrv4.com URL is a credits/watermark image."""
+    lower = url.lower()
+    if 'credits' in lower or 'watermark' in lower or 'logo' in lower:
+        return True
     return False

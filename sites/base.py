@@ -65,6 +65,21 @@ class BaseSiteAdapter(ABC):
         """Parse manga page HTML to get list of available chapters"""
         pass
     
+    async def resolve_manga_slug(self, session, url: str) -> Optional[str]:
+        """Resolve the correct manga slug from any URL (including chapter URLs).
+        
+        Default implementation just uses get_manga_slug(). Override in adapters
+        where chapter URLs have different slugs than manga page URLs.
+        """
+        return self.get_manga_slug(url)
+    
+    def get_all_chapters_url(self, slug: str) -> Optional[str]:
+        """Get URL for a page that lists ALL chapters (not just recent ones).
+        
+        Return None if the site doesn't have such a page.
+        """
+        return None
+    
     def normalize_image_url(self, url: str) -> str:
         """Normalize/transform image URL if needed (e.g., base64 decoding)"""
         return url

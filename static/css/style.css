@@ -422,7 +422,6 @@ body {
     width: 900px;
     margin: 0 auto;
     padding: 0;
-    transform-origin: top center;
 }
 
 .reader-pages img {

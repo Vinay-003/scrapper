@@ -462,9 +462,8 @@
 
     function applyZoom() {
         const container = $("#reader-pages");
-        container.style.transform = "scale(" + state.zoom + ")";
-        // Adjust width to compensate for scaling
-        container.style.width = Math.round(900 / state.zoom) + "px";
+        // Change width directly — images are width:100% so they resize naturally
+        container.style.width = Math.round(900 * state.zoom) + "px";
         $("#zoom-label").textContent = Math.round(state.zoom * 100) + "%";
     }
 

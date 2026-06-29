@@ -325,8 +325,9 @@ async def run_scraper_job(job_id: str, job: dict):
 
         connector = aiohttp.TCPConnector(limit=job["workers"] * job["chapter_workers"] + 4)
         async with aiohttp.ClientSession(connector=connector, headers=adapter.headers) as session:
-            # Fetch manga page
-            manga_url = adapter.get_manga_url(adapter.get_manga_slug(job["url"]) or "")
+            # Resolve correct manga slug (some sites have different slugs for chapter vs manga URLs)
+            manga_slug = await adapter.resolve_manga_slug(session, job["url"])
+            manga_url = adapter.get_manga_url(manga_slug or "")
             if not manga_url:
                 # Try using the original URL directly
                 manga_url = job["url"]
@@ -353,7 +354,28 @@ async def run_scraper_job(job_id: str, job: dict):
                 job["log"].append("No chapters found. Check the URL.")
                 return
 
-            job["log"].append(f"Found {len(chapters)} chapters")
+            job["log"].append(f"Found {len(chapters)} chapters on main page")
+
+            # Some sites have a separate all-chapters page (e.g., mgeko.cc)
+            # If the user requested a range that might not be in the initial list, try the full list
+            start = job["start"] if job["start"] is not None else None
+            end = job["end"] if job["end"] is not None else None
+            if start is not None and end is not None:
+                min_ch = min(ch.number for ch in chapters)
+                max_ch = max(ch.number for ch in chapters)
+                if float(start) < min_ch or float(end) > max_ch:
+                    all_chapters_url = adapter.get_all_chapters_url(manga_slug)
+                    if all_chapters_url:
+                        try:
+                            async with session.get(all_chapters_url) as resp:
+                                if resp.status == 200:
+                                    all_html = await resp.text()
+                                    all_chapters = adapter.get_available_chapters(all_html)
+                                    if len(all_chapters) > len(chapters):
+                                        chapters = all_chapters
+                                        job["log"].append(f"Loaded all-chapters page: {len(chapters)} chapters")
+                        except Exception:
+                            pass
 
             # Filter by chapter range
             start = job["start"] if job["start"] is not None else chapters[0].number
