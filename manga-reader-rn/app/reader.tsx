@@ -17,20 +17,15 @@ import { t, isDark } from "../src/lib/theme";
 import { saveRecentlyRead } from "../src/lib/storage";
 
 const SCREEN = Dimensions.get("window");
+const ZOOM_STEPS = [5, 10, 25, 50];
 
-function getDistance(t1: { pageX: number; pageY: number }, t2: { pageX: number; pageY: number }) {
-  return Math.sqrt((t1.pageX - t2.pageX) ** 2 + (t1.pageY - t2.pageY) ** 2);
+function dist(a: { pageX: number; pageY: number }, b: { pageX: number; pageY: number }) {
+  return Math.sqrt((a.pageX - b.pageX) ** 2 + (a.pageY - b.pageY) ** 2);
 }
 
 function MangaImage({ uri, width, dims }: { uri: string; width: number; dims?: { w: number; h: number } }) {
   const height = dims ? (width * dims.h) / dims.w : width * 1.5;
-  return (
-    <Image
-      source={{ uri, cache: "reload" }}
-      style={{ width, height }}
-      resizeMode="contain"
-    />
-  );
+  return <Image source={{ uri, cache: "reload" }} style={{ width, height }} resizeMode="contain" />;
 }
 
 export default function ReaderScreen() {
@@ -45,22 +40,28 @@ export default function ReaderScreen() {
   const [zoom, setZoom] = useState(1);
   const [panX, setPanX] = useState(0);
   const [panY, setPanY] = useState(0);
+  const [zoomStep, setZoomStep] = useState(5);
+  const [showStepPicker, setShowStepPicker] = useState(false);
   const colors = t();
   const chapterNum = parseFloat(chapter!);
   const safeSlug = encodeSlug(slug || "");
 
+  const scrollRef = useRef<ScrollView>(null);
   const scrollYRef = useRef(0);
   const gestureRef = useRef({
     initialDist: 0,
     baseZoom: 1,
     basePanX: 0,
     basePanY: 0,
+    baseScrollY: 0,
     panStartX: 0,
     panStartY: 0,
     mode: "none" as "none" | "pinch" | "pan",
     touchStartX: 0,
     touchStartY: 0,
+    scrollWasEnabled: true,
   });
+  const overshootRef = useRef(0);
 
   useEffect(() => {
     (async () => {
@@ -72,6 +73,7 @@ export default function ReaderScreen() {
       setPanX(0);
       setPanY(0);
       scrollYRef.current = 0;
+      overshootRef.current = 0;
       gestureRef.current.mode = "none";
       const data = await api(`/api/manga/${safeSlug}/chapter/${chapterNum}`);
       if (data?.images) {
@@ -83,9 +85,7 @@ export default function ReaderScreen() {
             `${base}/api/manga/${safeSlug}/chapter/${chapterNum}/image/${encodeURIComponent(name)}?_v=${ts}`
           )
         );
-        if (data.sizes) {
-          setImageSizes(data.sizes);
-        }
+        if (data.sizes) setImageSizes(data.sizes);
       }
       setLoading(false);
       saveRecentlyRead(slug!, chapterNum);
@@ -96,92 +96,116 @@ export default function ReaderScreen() {
     router.replace({ pathname: "/reader", params: { slug: slug!, chapter: chapterNum + delta } });
   };
 
-  const clampZoom = (z: number) => Math.max(0.5, Math.min(5, z));
-
-  const onTouchStart = useCallback((e: GestureResponderEvent) => {
+  const onTouchStart = (e: GestureResponderEvent) => {
     const t = e.nativeEvent.touches;
-    if (!t) return;
-    gestureRef.current.touchStartX = t[0]?.pageX || 0;
-    gestureRef.current.touchStartY = t[0]?.pageY || 0;
+    if (!t || t.length === 0) return;
+    gestureRef.current.touchStartX = t[0].pageX;
+    gestureRef.current.touchStartY = t[0].pageY;
 
     if (t.length === 2) {
-      gestureRef.current = {
-        ...gestureRef.current,
-        initialDist: getDistance(t[0], t[1]),
-        baseZoom: zoom,
-        basePanX: panX,
-        basePanY: panY,
-        mode: "pinch",
-      };
+      gestureRef.current.scrollWasEnabled = zoom <= 1;
+      gestureRef.current.initialDist = dist(t[0], t[1]);
+      gestureRef.current.baseZoom = zoom;
+      gestureRef.current.basePanX = panX;
+      gestureRef.current.basePanY = panY;
+      gestureRef.current.baseScrollY = scrollYRef.current;
+      gestureRef.current.mode = "pinch";
+      try { scrollRef.current?.setNativeProps({ scrollEnabled: false }); } catch {}
     } else if (t.length === 1 && zoom > 1) {
-      gestureRef.current = {
-        ...gestureRef.current,
-        panStartX: t[0].pageX,
-        panStartY: t[0].pageY,
-        basePanX: panX,
-        basePanY: panY,
-        mode: "pan",
-      };
+      gestureRef.current.panStartX = t[0].pageX;
+      gestureRef.current.panStartY = t[0].pageY;
+      gestureRef.current.basePanX = panX;
+      gestureRef.current.basePanY = panY;
+      gestureRef.current.mode = "pan";
+      try { scrollRef.current?.setNativeProps({ scrollEnabled: false }); } catch {}
     }
-  }, [zoom, panX, panY]);
+  };
 
-  const onTouchMove = useCallback((e: GestureResponderEvent) => {
+  const onTouchMove = (e: GestureResponderEvent) => {
     const t = e.nativeEvent.touches;
     if (!t) return;
 
     if (t.length === 2 && gestureRef.current.mode === "pinch") {
-      const dist = getDistance(t[0], t[1]);
-      const ratio = dist / gestureRef.current.initialDist;
-      const newZoom = clampZoom(gestureRef.current.baseZoom * ratio);
-      const scale = newZoom / gestureRef.current.baseZoom;
-
+      const d = dist(t[0], t[1]);
+      const newZoom = Math.max(0.5, Math.min(5, gestureRef.current.baseZoom * (d / gestureRef.current.initialDist)));
+      const s = newZoom / gestureRef.current.baseZoom;
       const fx = (t[0].pageX + t[1].pageX) / 2;
       const fy = (t[0].pageY + t[1].pageY) / 2;
-
-      const newPanX = fx * (1 - scale) + gestureRef.current.basePanX * scale;
-      const newPanY = (fy + scrollYRef.current) * (1 - scale) + gestureRef.current.basePanY * scale;
-
+      const bsy = gestureRef.current.baseScrollY;
       setZoom(newZoom);
-      setPanX(newPanX);
-      setPanY(newPanY);
+      setPanX(fx * (1 - s) + gestureRef.current.basePanX * s);
+      setPanY((fy + bsy) * (1 - s) + gestureRef.current.basePanY * s);
     } else if (t.length === 1 && gestureRef.current.mode === "pan") {
-      const dx = t[0].pageX - gestureRef.current.panStartX;
-      const dy = t[0].pageY - gestureRef.current.panStartY;
-      setPanX(gestureRef.current.basePanX + dx);
-      setPanY(gestureRef.current.basePanY + dy);
+      setPanX(gestureRef.current.basePanX + (t[0].pageX - gestureRef.current.panStartX));
+      setPanY(gestureRef.current.basePanY + (t[0].pageY - gestureRef.current.panStartY));
     }
-  }, []);
+  };
 
-  const onTouchEnd = useCallback((e: GestureResponderEvent) => {
+  const onTouchEnd = (e: GestureResponderEvent) => {
     if (gestureRef.current.mode === "none" && zoom <= 1) {
       const dx = Math.abs(e.nativeEvent.pageX - gestureRef.current.touchStartX);
       const dy = Math.abs(e.nativeEvent.pageY - gestureRef.current.touchStartY);
-      if (dx < 10 && dy < 10) {
-        setShowUI((v) => !v);
-      }
+      if (dx < 10 && dy < 10) setShowUI((v) => !v);
     }
-    setTimeout(() => { gestureRef.current.mode = "none"; }, 50);
-  }, [zoom]);
+    const wasPinching = gestureRef.current.mode === "pinch";
+    const wasPanning = gestureRef.current.mode === "pan";
+    gestureRef.current.mode = "none";
 
-  const zoomIn = () => setZoom((z) => clampZoom(z + 0.5));
-  const zoomOut = () => {
-    setZoom((z) => {
-      const nz = clampZoom(z - 0.5);
-      if (nz <= 1) {
-        setPanX(0);
-        setPanY(0);
-      }
-      return nz;
-    });
+    if (wasPinching || wasPanning) {
+      setTimeout(() => {
+        if (zoom <= 1) {
+          try { scrollRef.current?.setNativeProps({ scrollEnabled: true }); } catch {}
+        }
+      }, 100);
+    }
   };
+
+  const zoomIn = () => {
+    const cur = zoom * 100;
+    if (overshootRef.current > 0) {
+      const target = cur + overshootRef.current;
+      overshootRef.current = 0;
+      setZoom(Math.min(5, target / 100));
+      return;
+    }
+    const next = cur + zoomStep;
+    if (cur < 100 && next > 100) {
+      overshootRef.current = next - 100;
+      setZoom(1);
+    } else {
+      overshootRef.current = 0;
+      setZoom(Math.min(5, next / 100));
+    }
+  };
+
+  const zoomOut = () => {
+    const cur = zoom * 100;
+    if (overshootRef.current < 0) {
+      const target = cur + overshootRef.current;
+      overshootRef.current = 0;
+      setZoom(Math.max(0.5, target / 100));
+      return;
+    }
+    const next = cur - zoomStep;
+    if (cur > 100 && next < 100) {
+      overshootRef.current = next - 100;
+      setZoom(1);
+    } else {
+      overshootRef.current = 0;
+      setZoom(Math.max(0.5, next / 100));
+    }
+  };
+
   const resetZoom = () => {
     setZoom(1);
     setPanX(0);
     setPanY(0);
+    overshootRef.current = 0;
     gestureRef.current.mode = "none";
+    try { scrollRef.current?.setNativeProps({ scrollEnabled: true }); } catch {}
   };
 
-  const scrollEnabled = zoom <= 1;
+  const zoomPct = Math.round(zoom * 100);
 
   if (loading) {
     return (
@@ -208,11 +232,33 @@ export default function ReaderScreen() {
             <TouchableOpacity style={[s.zoomBtn, { backgroundColor: colors.bg3 }]} onPress={zoomOut}>
               <Text style={[s.zoomText, { color: colors.fg }]}>−</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={resetZoom}>
+            <TouchableOpacity
+              style={[s.stepBadge, { backgroundColor: colors.bg3 }]}
+              onPress={() => setShowStepPicker((v) => !v)}
+            >
               <Text style={[s.zoomLabel, { color: colors.fg3 }]}>
-                {Math.round(zoom * 100)}%
+                {zoomPct}% <Text style={{ fontSize: 10 }}>({zoomStep}%)</Text>
               </Text>
             </TouchableOpacity>
+            {showStepPicker && (
+              <View style={[s.stepPicker, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
+                {ZOOM_STEPS.map((s) => (
+                  <TouchableOpacity
+                    key={s}
+                    style={[s.stepOption, zoomStep === s && { backgroundColor: colors.accent + "30" }]}
+                    onPress={() => {
+                      setZoomStep(s);
+                      overshootRef.current = 0;
+                      setShowStepPicker(false);
+                    }}
+                  >
+                    <Text style={{ color: colors.fg, fontSize: 13, fontWeight: zoomStep === s ? "700" : "400" }}>
+                      {s}%
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
             <TouchableOpacity style={[s.zoomBtn, { backgroundColor: colors.bg3 }]} onPress={zoomIn}>
               <Text style={[s.zoomText, { color: colors.fg }]}>+</Text>
             </TouchableOpacity>
@@ -221,8 +267,9 @@ export default function ReaderScreen() {
       )}
 
       <ScrollView
+        ref={scrollRef}
         style={s.scroll}
-        scrollEnabled={scrollEnabled}
+        scrollEnabled={zoom <= 1}
         onScroll={(e) => {
           scrollYRef.current = e.nativeEvent.contentOffset.y;
           const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
@@ -238,11 +285,8 @@ export default function ReaderScreen() {
         <View style={{ alignItems: "center" }}>
           <View
             style={{
-              transform: [
-                { translateX: panX },
-                { translateY: panY },
-                { scale: zoom },
-              ],
+              transformOrigin: "top left" as any,
+              transform: [{ translateX: panX }, { translateY: panY }, { scale: zoom }],
             }}
           >
             {imageUris.map((uri, i) => (
@@ -279,15 +323,21 @@ const s = StyleSheet.create({
   scroll: { flex: 1 },
   topBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    paddingTop: 50, paddingHorizontal: 16, paddingBottom: 10, borderBottomWidth: 1,
+    paddingTop: 50, paddingHorizontal: 12, paddingBottom: 10, borderBottomWidth: 1,
   },
   barBtn: { padding: 4 },
   barBtnText: { fontSize: 20, fontWeight: "700" },
   barTitle: { fontSize: 15, fontWeight: "700", flex: 1, textAlign: "center" },
-  zoomRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  zoomBtn: { width: 34, height: 34, borderRadius: 10, justifyContent: "center", alignItems: "center" },
+  zoomRow: { flexDirection: "row", alignItems: "center", gap: 4 },
+  zoomBtn: { width: 32, height: 32, borderRadius: 8, justifyContent: "center", alignItems: "center" },
   zoomText: { fontSize: 18, fontWeight: "700" },
-  zoomLabel: { fontSize: 12, minWidth: 38, textAlign: "center" },
+  stepBadge: { paddingHorizontal: 6, paddingVertical: 4, borderRadius: 6 },
+  zoomLabel: { fontSize: 12, textAlign: "center" },
+  stepPicker: {
+    position: "absolute", top: 38, right: 0, borderRadius: 8,
+    borderWidth: 1, paddingVertical: 4, zIndex: 10, minWidth: 70,
+  },
+  stepOption: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 4 },
   bottomBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: 1,
