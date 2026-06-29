@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -23,39 +23,30 @@ function dist(a: { pageX: number; pageY: number }, b: { pageX: number; pageY: nu
   return Math.sqrt((a.pageX - b.pageX) ** 2 + (a.pageY - b.pageY) ** 2);
 }
 
-function MangaImage({ uri, width, dims }: { uri: string; width: number; dims?: { w: number; h: number } }) {
-  const [measured, setMeasured] = useState<{ w: number; h: number } | null>(null);
-  const hasDims = dims && dims.w > 0;
-  const finalDims = hasDims ? dims! : measured;
-
-  if (!finalDims) {
-    return <Image source={{ uri }} style={{ width, aspectRatio: 2 / 3 }} resizeMode="contain" />;
-  }
-  const height = (width * finalDims.h) / finalDims.w;
-  return (
-    <Image
-      source={{ uri }}
-      style={{ width, height }}
-      resizeMode="contain"
-      onLoad={(e: any) => {
-        const w = e.source?.width;
-        const h = e.source?.height;
-        if (w > 0 && h > 0 && !hasDims && !measured) {
-          setMeasured({ w, h });
-        }
-      }}
-    />
-  );
+function getSizeAsync(uri: string): Promise<{ w: number; h: number }> {
+  return new Promise((resolve) => {
+    Image.getSize(
+      uri,
+      (w, h) => resolve({ w, h }),
+      () => resolve({ w: 0, h: 0 })
+    );
+  });
 }
 
-const MemoizedMangaImage = MangaImage;
+function MangaImage({ uri, width, dims }: { uri: string; width: number; dims: { w: number; h: number } }) {
+  if (dims.w === 0) {
+    return <Image source={{ uri }} style={{ width, aspectRatio: 2 / 3 }} resizeMode="contain" />;
+  }
+  const height = (width * dims.h) / dims.w;
+  return <Image source={{ uri }} style={{ width, height }} resizeMode="contain" />;
+}
 
 export default function ReaderScreen() {
   const { slug, chapter } = useLocalSearchParams<{ slug: string; chapter: string }>();
   const router = useRouter();
   const [imageUris, setImageUris] = useState<string[]>([]);
   const [imageNames, setImageNames] = useState<string[]>([]);
-  const [imageSizes, setImageSizes] = useState<Record<string, { w: number; h: number }>>({});
+  const [imageDims, setImageDims] = useState<Record<string, { w: number; h: number }>>({});
   const [loading, setLoading] = useState(true);
   const [showUI, setShowUI] = useState(true);
   const [zoom, setZoom] = useState(1);
@@ -92,7 +83,7 @@ export default function ReaderScreen() {
       setLoading(true);
       setImageUris([]);
       setImageNames([]);
-      setImageSizes({});
+      setImageDims({});
       setZoom(1);
       setPanX(0);
       setPanY(0);
@@ -107,7 +98,6 @@ export default function ReaderScreen() {
       const data = await getChapterImages(slug!, chapterNum);
       if (data) {
         setImageNames(data.images);
-        setImageSizes(data.sizes);
 
         const uris: string[] = [];
         for (const name of data.images) {
@@ -115,6 +105,15 @@ export default function ReaderScreen() {
           uris.push(uri || "");
         }
         setImageUris(uris);
+
+        const dimsMap: Record<string, { w: number; h: number }> = {};
+        const sizePromises = uris.map(async (uri, i) => {
+          if (!uri) return;
+          const dims = await getSizeAsync(uri);
+          dimsMap[data.images[i]] = dims;
+        });
+        await Promise.all(sizePromises);
+        setImageDims(dimsMap);
       }
       setLoading(false);
       saveRecentlyRead(slug!, chapterNum);
@@ -335,11 +334,11 @@ export default function ReaderScreen() {
             ]}
           >
             {imageUris.map((uri, i) => (
-              <MemoizedMangaImage
+              <MangaImage
                 key={`${chapterNum}-${i}`}
                 uri={uri}
                 width={SCREEN.width}
-                dims={imageSizes[imageNames[i]]}
+                dims={imageDims[imageNames[i]] || { w: 0, h: 0 }}
               />
             ))}
           </View>
