@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Alert,
   StatusBar,
+  Share,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { t, isDark } from "../src/lib/theme";
@@ -115,6 +116,25 @@ export default function ScraperScreen() {
   const removeWish = async (u: string) => {
     await removeFromWishlist(u);
     setWishlist(await getWishlist());
+  };
+
+  const copyLogs = async (job: ScraperJob) => {
+    const logText = [
+      `URL: ${job.url}`,
+      `Site: ${job.siteName}`,
+      `Status: ${job.status}`,
+      `Slug: ${job.mangaSlug}`,
+      `Title: ${job.mangaTitle}`,
+      `Progress: ${job.completedChapters}/${job.totalChapters}`,
+      `Failed: ${job.failedChapters.join(", ") || "none"}`,
+      `Error: ${job.error || "none"}`,
+      "",
+      "--- LOG ---",
+      ...job.log,
+    ].join("\n");
+    try {
+      await Share.share({ message: logText });
+    } catch {}
   };
 
   return (
@@ -311,16 +331,21 @@ export default function ScraperScreen() {
               {/* Log */}
               {job.log.length > 0 && (
                 <View style={[s.logBox, { backgroundColor: colors.bg3 }]}>
-                  {job.log.slice(-4).map((line, i) => (
-                    <Text key={i} style={[s.logText, { color: colors.fg3 }]} numberOfLines={1}>
+                  {job.log.slice(-8).map((line, i) => (
+                    <Text key={i} style={[s.logText, { color: colors.fg3 }]} numberOfLines={2}>
                       {line}
                     </Text>
                   ))}
                 </View>
               )}
-              <TouchableOpacity onPress={() => handleDeleteJob(job.id)} style={s.removeBtn}>
-                <Text style={[s.removeText, { color: colors.danger }]}>Remove</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+                <TouchableOpacity onPress={() => copyLogs(job)} style={s.removeBtn}>
+                  <Text style={[s.removeText, { color: colors.accent }]}>Copy Logs</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => handleDeleteJob(job.id)} style={s.removeBtn}>
+                  <Text style={[s.removeText, { color: colors.danger }]}>Remove</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           ))
         )}
