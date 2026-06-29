@@ -9,14 +9,15 @@ import {
   StatusBar,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { api, setApiBase, getApiBase } from "../src/lib/api";
 import { t, toggleTheme, isDark } from "../src/lib/theme";
 import { getRecentlyRead, RecentEntry } from "../src/lib/storage";
+import { listManga } from "../src/lib/manga";
 
 interface Manga {
   slug: string;
   title: string;
-  chapter_count: number;
+  chapters: number;
+  last_chapter: number | null;
 }
 
 export default function HomeScreen() {
@@ -26,21 +27,19 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [colors, setColors] = useState(t());
   const [showSettings, setShowSettings] = useState(false);
-  const [apiInput, setApiInput] = useState("");
 
   const load = useCallback(async () => {
-    const [data, recentData] = await Promise.all([
-      api("/api/manga"),
+    const [mangaData, recentData] = await Promise.all([
+      listManga(),
       getRecentlyRead(),
     ]);
-    if (data?.manga) setManga(data.manga);
+    setManga(mangaData);
     setRecent(recentData);
     setColors(t());
   }, []);
 
   useEffect(() => {
     load();
-    getApiBase().then(setApiInput);
   }, [load]);
 
   const onRefresh = async () => {
@@ -112,13 +111,8 @@ export default function HomeScreen() {
             {/* Settings Panel */}
             {showSettings && (
               <View style={[s.settingsPanel, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
-                <Text style={[s.settingsLabel, { color: colors.fg2 }]}>API Base URL</Text>
-                <View style={s.settingsRow}>
-                  <Text style={[s.settingsInput, { color: colors.fg, backgroundColor: colors.bg3, borderColor: colors.border }]} selectable>
-                    {apiInput}
-                  </Text>
-                </View>
-                <Text style={[s.settingsHint, { color: colors.fg3 }]}>Restart app after changing</Text>
+                <Text style={[s.settingsLabel, { color: colors.fg2 }]}>Storage</Text>
+                <Text style={[s.settingsHint, { color: colors.fg3 }]}>All data is stored locally on this device</Text>
               </View>
             )}
 
@@ -176,7 +170,7 @@ export default function HomeScreen() {
                       {m.title}
                     </Text>
                     <Text style={[s.mangaChapters, { color: colors.fg3 }]}>
-                      {m.chapter_count} chapters
+                      {m.chapters} chapters
                     </Text>
                   </View>
                   <Text style={[s.mangaArrow, { color: colors.fg3 }]}>→</Text>

@@ -11,22 +11,10 @@ import {
   StatusBar,
 } from "react-native";
 import { useRouter } from "expo-router";
-import { api } from "../src/lib/api";
 import { t, isDark } from "../src/lib/theme";
 import { getWishlist, removeFromWishlist, addToWishlist } from "../src/lib/storage";
-
-interface Job {
-  id: string;
-  url: string;
-  site: string;
-  site_name: string;
-  status: string;
-  progress: number;
-  completed_chapters: number;
-  total_chapters: number;
-  failed_chapters: number[];
-  log: string[];
-}
+import { getAllSites, detectSite } from "../src/lib/scraper/registry";
+import { startJob, getJobs, deleteJob as deleteJobLocal, ScraperJob, loadJobs } from "../src/lib/scraper";
 
 interface SiteInfo {
   [domain: string]: string;
@@ -41,7 +29,7 @@ export default function ScraperScreen() {
   const [endCh, setEndCh] = useState("");
   const [imageWorkers, setImageWorkers] = useState("4");
   const [chapterWorkers, setChapterWorkers] = useState("2");
-  const [jobs, setJobs] = useState<Job[]>([]);
+  const [jobs, setJobs] = useState<ScraperJob[]>([]);
   const [detected, setDetected] = useState("");
   const [detecting, setDetecting] = useState(false);
   const [wishlist, setWishlist] = useState<{ title: string; url: string }[]>([]);
@@ -53,66 +41,56 @@ export default function ScraperScreen() {
 
   useEffect(() => {
     (async () => {
-      const [sitesData, jobsData, wishData] = await Promise.all([
-        api("/api/sites"),
-        api("/api/scraper/jobs"),
-        getWishlist(),
-      ]);
-      if (sitesData?.sites) setSites(sitesData.sites);
-      if (jobsData?.jobs) setJobs(jobsData.jobs);
+      await loadJobs();
+      const sitesData = getAllSites();
+      const jobsData = getJobs();
+      const wishData = await getWishlist();
+      setSites(sitesData);
+      setJobs(jobsData);
       setWishlist(wishData);
     })();
   }, []);
 
-  const detectSite = (u: string) => {
+  const handleDetectSite = (u: string) => {
     if (detectTimer.current) clearTimeout(detectTimer.current);
     if (!u) { setDetected(""); return; }
-    detectTimer.current = setTimeout(async () => {
+    detectTimer.current = setTimeout(() => {
       setDetecting(true);
-      const data = await api("/api/scraper/detect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: u }),
-      });
+      const result = detectSite(u);
       setDetecting(false);
-      if (data?.detected) {
-        setDetected(data.name);
-        setSelectedSite(data.domain);
+      if (result) {
+        setDetected(result.name);
+        setSelectedSite(result.domain);
       } else {
         setDetected("Not supported");
       }
     }, 500);
   };
 
-  const startJob = async () => {
+  const handleStartJob = async () => {
     if (!url.trim()) return Alert.alert("Error", "Enter a manga URL");
     if (detected === "Not supported") return Alert.alert("Error", "This site is not supported");
-    const config: any = {
+    const job = await startJob({
       url: url.trim(),
       site: selectedSite || undefined,
-      start: startCh ? parseFloat(startCh) : null,
-      end: endCh ? parseFloat(endCh) : null,
+      start: startCh ? parseFloat(startCh) : undefined,
+      end: endCh ? parseFloat(endCh) : undefined,
       workers: parseInt(imageWorkers) || 4,
-      chapter_workers: parseInt(chapterWorkers) || 2,
-    };
-    const data = await api("/api/scraper/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(config),
+      chapterWorkers: parseInt(chapterWorkers) || 2,
     });
-    if (data) {
-      Alert.alert("Started", `Download started on ${data.site}`);
+    if (job) {
+      Alert.alert("Started", `Download started on ${job.siteName}`);
       startPolling();
     }
   };
 
   const startPolling = () => {
     if (pollRef.current) return;
-    pollRef.current = setInterval(async () => {
-      const data = await api("/api/scraper/jobs");
-      if (data?.jobs) setJobs(data.jobs);
-      const active = (data?.jobs || []).filter(
-        (j: Job) => j.status !== "completed" && j.status !== "failed"
+    pollRef.current = setInterval(() => {
+      const currentJobs = getJobs();
+      setJobs(currentJobs);
+      const active = currentJobs.filter(
+        (j) => j.status !== "completed" && j.status !== "failed"
       );
       if (active.length === 0 && pollRef.current) {
         clearInterval(pollRef.current);
@@ -121,9 +99,9 @@ export default function ScraperScreen() {
     }, 2000);
   };
 
-  const deleteJob = async (id: string) => {
-    await api(`/api/scraper/jobs/${id}`, { method: "DELETE" });
-    setJobs((prev) => prev.filter((j) => j.id !== id));
+  const handleDeleteJob = async (id: string) => {
+    deleteJobLocal(id);
+    setJobs(getJobs());
   };
 
   const addWish = async () => {
@@ -160,7 +138,7 @@ export default function ScraperScreen() {
             placeholder="Paste manga or chapter URL..."
             placeholderTextColor={colors.fg3}
             value={url}
-            onChangeText={(u) => { setUrl(u); detectSite(u); }}
+            onChangeText={(u) => { setUrl(u); handleDetectSite(u); }}
             autoCapitalize="none"
             autoCorrect={false}
             keyboardType="url"
@@ -272,7 +250,7 @@ export default function ScraperScreen() {
             s.startBtn,
             { backgroundColor: detected === "Not supported" ? colors.bg3 : colors.accent },
           ]}
-          onPress={startJob}
+          onPress={handleStartJob}
           disabled={detected === "Not supported"}
           activeOpacity={0.8}
         >
@@ -322,11 +300,11 @@ export default function ScraperScreen() {
               </View>
               <View style={s.jobMeta}>
                 <Text style={[s.jobMetaText, { color: colors.fg3 }]}>
-                  {job.completed_chapters}/{job.total_chapters} chapters
+                  {job.completedChapters}/{job.totalChapters} chapters
                 </Text>
-                {job.failed_chapters.length > 0 && (
+                {job.failedChapters.length > 0 && (
                   <Text style={[s.jobMetaText, { color: colors.danger }]}>
-                    {job.failed_chapters.length} failed
+                    {job.failedChapters.length} failed
                   </Text>
                 )}
               </View>
@@ -340,7 +318,7 @@ export default function ScraperScreen() {
                   ))}
                 </View>
               )}
-              <TouchableOpacity onPress={() => deleteJob(job.id)} style={s.removeBtn}>
+              <TouchableOpacity onPress={() => handleDeleteJob(job.id)} style={s.removeBtn}>
                 <Text style={[s.removeText, { color: colors.danger }]}>Remove</Text>
               </TouchableOpacity>
             </View>
@@ -376,7 +354,7 @@ export default function ScraperScreen() {
             <View style={s.wishActions}>
               <TouchableOpacity
                 style={[s.useBtn, { backgroundColor: colors.accent }]}
-                onPress={() => { setUrl(w.url); detectSite(w.url); }}
+                onPress={() => { setUrl(w.url); handleDetectSite(w.url); }}
               >
                 <Text style={s.useBtnText}>Use</Text>
               </TouchableOpacity>

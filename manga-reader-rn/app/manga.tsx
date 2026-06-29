@@ -9,8 +9,8 @@ import {
   StatusBar,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { api, encodeSlug } from "../src/lib/api";
 import { t, isDark } from "../src/lib/theme";
+import { getMangaDetail, deleteManga as deleteMangaLocal, deleteChapter as deleteChapterLocal, MangaDetail } from "../src/lib/manga";
 
 interface Chapter {
   number: number;
@@ -20,33 +20,27 @@ interface Chapter {
 export default function MangaScreen() {
   const { slug } = useLocalSearchParams<{ slug: string }>();
   const router = useRouter();
-  const [chapters, setChapters] = useState<Chapter[]>([]);
-  const [title, setTitle] = useState("");
-  const [lastChapter, setLastChapter] = useState<number | null>(null);
+  const [detail, setDetail] = useState<MangaDetail | null>(null);
   const colors = t();
-  const safeSlug = encodeSlug(slug || "");
 
   const load = useCallback(async () => {
     if (!slug) return;
-    const data = await api(`/api/manga/${safeSlug}`);
-    if (data) {
-      setChapters(data.chapters || []);
-      setTitle(data.title || slug);
-      setLastChapter(data.progress?.last_chapter ?? null);
-    }
-  }, [safeSlug, slug]);
+    const data = await getMangaDetail(slug);
+    setDetail(data);
+  }, [slug]);
 
   useEffect(() => { load(); }, [load]);
 
   const deleteManga = () => {
-    Alert.alert("Delete", `Delete all chapters of ${title}?`, [
+    if (!detail) return;
+    Alert.alert("Delete", `Delete all chapters of ${detail.title}?`, [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
-          const res = await api(`/api/manga/${safeSlug}/delete`, { method: "DELETE" });
-          if (res?.ok) router.back();
+          await deleteMangaLocal(slug!);
+          router.back();
         },
       },
     ]);
@@ -59,12 +53,16 @@ export default function MangaScreen() {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
-          await api(`/api/manga/${safeSlug}/chapter/${num}/delete`, { method: "DELETE" });
+          await deleteChapterLocal(slug!, num);
           load();
         },
       },
     ]);
   };
+
+  const chapters = detail?.chapters || [];
+  const title = detail?.title || slug || "";
+  const lastChapter = detail?.progress?.last_chapter as number | null;
 
   return (
     <View style={[s.container, { backgroundColor: colors.bg }]}>

@@ -12,9 +12,9 @@ import {
   GestureResponderEvent,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { api, getApiBase, encodeSlug } from "../src/lib/api";
 import { t, isDark } from "../src/lib/theme";
 import { saveRecentlyRead } from "../src/lib/storage";
+import { getChapterImages, getImageFileUri } from "../src/lib/manga";
 
 const SCREEN = Dimensions.get("window");
 const ZOOM_STEPS = [5, 10, 25, 50];
@@ -44,7 +44,6 @@ export default function ReaderScreen() {
   const [showStepPicker, setShowStepPicker] = useState(false);
   const colors = t();
   const chapterNum = parseFloat(chapter!);
-  const safeSlug = encodeSlug(slug || "");
 
   const scrollRef = useRef<ScrollView>(null);
   const scrollYRef = useRef(0);
@@ -75,22 +74,24 @@ export default function ReaderScreen() {
       scrollYRef.current = 0;
       overshootRef.current = 0;
       gestureRef.current.mode = "none";
-      const data = await api(`/api/manga/${safeSlug}/chapter/${chapterNum}`);
-      if (data?.images) {
-        const base = await getApiBase();
-        const ts = Date.now();
+
+      const data = await getChapterImages(slug!, chapterNum);
+      if (data) {
         setImageNames(data.images);
-        setImageUris(
-          data.images.map((name: string) =>
-            `${base}/api/manga/${safeSlug}/chapter/${chapterNum}/image/${encodeURIComponent(name)}?_v=${ts}`
-          )
-        );
-        if (data.sizes) setImageSizes(data.sizes);
+        setImageSizes(data.sizes);
+
+        // Resolve file URIs for each image
+        const uris: string[] = [];
+        for (const name of data.images) {
+          const uri = await getImageFileUri(slug!, chapterNum, name);
+          uris.push(uri || "");
+        }
+        setImageUris(uris);
       }
       setLoading(false);
       saveRecentlyRead(slug!, chapterNum);
     })();
-  }, [safeSlug, slug, chapterNum]);
+  }, [slug, chapterNum]);
 
   const navigateChapter = (delta: number) => {
     router.replace({ pathname: "/reader", params: { slug: slug!, chapter: chapterNum + delta } });
@@ -242,18 +243,18 @@ export default function ReaderScreen() {
             </TouchableOpacity>
             {showStepPicker && (
               <View style={[s.stepPicker, { backgroundColor: colors.bg2, borderColor: colors.border }]}>
-                {ZOOM_STEPS.map((s) => (
+                {ZOOM_STEPS.map((step) => (
                   <TouchableOpacity
-                    key={s}
-                    style={[s.stepOption, zoomStep === s && { backgroundColor: colors.accent + "30" }]}
+                    key={step}
+                    style={[s.stepOption, zoomStep === step && { backgroundColor: colors.accent + "30" }]}
                     onPress={() => {
-                      setZoomStep(s);
+                      setZoomStep(step);
                       overshootRef.current = 0;
                       setShowStepPicker(false);
                     }}
                   >
-                    <Text style={{ color: colors.fg, fontSize: 13, fontWeight: zoomStep === s ? "700" : "400" }}>
-                      {s}%
+                    <Text style={{ color: colors.fg, fontSize: 13, fontWeight: zoomStep === step ? "700" : "400" }}>
+                      {step}%
                     </Text>
                   </TouchableOpacity>
                 ))}
