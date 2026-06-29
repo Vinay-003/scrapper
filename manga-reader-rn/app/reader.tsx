@@ -43,13 +43,25 @@ export default function ReaderScreen() {
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState(0);
   const [showUI, setShowUI] = useState(true);
-  const [btnZoom, setBtnZoom] = useState(1);
+  const [zoom, setZoom] = useState(1);
+  const [panX, setPanX] = useState(0);
+  const [panY, setPanY] = useState(0);
   const colors = t();
   const chapterNum = parseFloat(chapter!);
   const safeSlug = encodeSlug(slug || "");
 
-  const pinchRef = useRef({ initialDist: 0, baseScale: 1, active: false });
-  const [pinchScale, setPinchScale] = useState(1);
+  const gestureRef = useRef({
+    initialDist: 0,
+    baseZoom: 1,
+    panStartX: 0,
+    panStartY: 0,
+    basePanX: 0,
+    basePanY: 0,
+    mode: "none" as "none" | "pinch" | "pan",
+    touchStartX: 0,
+    touchStartY: 0,
+    tapTimer: null as ReturnType<typeof setTimeout> | null,
+  });
 
   useEffect(() => {
     (async () => {
@@ -57,9 +69,10 @@ export default function ReaderScreen() {
       setImageUris([]);
       setImageNames([]);
       setImageSizes({});
-      setPinchScale(1);
-      setBtnZoom(1);
-      pinchRef.current = { initialDist: 0, baseScale: 1, active: false };
+      setZoom(1);
+      setPanX(0);
+      setPanY(0);
+      gestureRef.current.mode = "none";
       const data = await api(`/api/manga/${safeSlug}/chapter/${chapterNum}`);
       if (data?.images) {
         const base = await getApiBase();
@@ -83,37 +96,99 @@ export default function ReaderScreen() {
     router.replace({ pathname: "/reader", params: { slug: slug!, chapter: chapterNum + delta } });
   };
 
+  const constrainPan = useCallback((z: number, px: number, py: number) => {
+    const maxPx = SCREEN.width * (z - 1) / 2;
+    const clampedX = Math.max(-maxPx, Math.min(maxPx, px));
+    return { x: maxPx > 0 ? clampedX : 0, y: py };
+  }, []);
+
   const onTouchStart = useCallback((e: GestureResponderEvent) => {
     const touches = e.nativeEvent.touches;
+    gestureRef.current.touchStartX = touches[0]?.pageX || 0;
+    gestureRef.current.touchStartY = touches[0]?.pageY || 0;
+
     if (touches.length === 2) {
       const dist = getDistance(touches[0], touches[1]);
-      pinchRef.current = { initialDist: dist, baseScale: pinchRef.current.baseScale || 1, active: true };
-      pinchRef.current.baseScale = pinchScale;
+      gestureRef.current = {
+        ...gestureRef.current,
+        initialDist: dist,
+        baseZoom: zoom,
+        mode: "pinch",
+        tapTimer: null,
+      };
+    } else if (touches.length === 1 && zoom > 1) {
+      gestureRef.current = {
+        ...gestureRef.current,
+        panStartX: touches[0].pageX,
+        panStartY: touches[0].pageY,
+        basePanX: panX,
+        basePanY: panY,
+        mode: "pan",
+        tapTimer: null,
+      };
     }
-  }, [pinchScale]);
+  }, [zoom, panX, panY]);
 
   const onTouchMove = useCallback((e: GestureResponderEvent) => {
     const touches = e.nativeEvent.touches;
-    if (touches.length === 2 && pinchRef.current.active && pinchRef.current.initialDist > 0) {
+    if (touches.length === 2 && gestureRef.current.mode === "pinch") {
       const dist = getDistance(touches[0], touches[1]);
-      const newScale = pinchRef.current.baseScale * (dist / pinchRef.current.initialDist);
-      setPinchScale(Math.max(0.5, Math.min(4, newScale)));
+      const newZoom = Math.max(0.5, Math.min(5, gestureRef.current.baseZoom * (dist / gestureRef.current.initialDist)));
+      setZoom(newZoom);
+      const clamped = constrainPan(newZoom, panX, panY);
+      setPanX(clamped.x);
+      setPanY(clamped.y);
+    } else if (touches.length === 1 && gestureRef.current.mode === "pan") {
+      const dx = touches[0].pageX - gestureRef.current.panStartX;
+      const dy = touches[0].pageY - gestureRef.current.panStartY;
+      const clamped = constrainPan(zoom, gestureRef.current.basePanX + dx, gestureRef.current.basePanY + dy);
+      setPanX(clamped.x);
+      setPanY(clamped.y);
     }
-  }, []);
+  }, [zoom, panX, panY, constrainPan]);
 
-  const onTouchEnd = useCallback(() => {
-    pinchRef.current.active = false;
-  }, []);
+  const onTouchEnd = useCallback((e: GestureResponderEvent) => {
+    if (gestureRef.current.mode === "none" && zoom <= 1) {
+      const dx = Math.abs((e.nativeEvent.changedTouches?.[0]?.pageX || 0) - gestureRef.current.touchStartX);
+      const dy = Math.abs((e.nativeEvent.changedTouches?.[0]?.pageY || 0) - gestureRef.current.touchStartY);
+      if (dx < 10 && dy < 10) {
+        setShowUI((v) => !v);
+      }
+    }
+    setTimeout(() => {
+      gestureRef.current.mode = "none";
+    }, 50);
+  }, [zoom]);
 
-  const zoomIn = () => setBtnZoom((z) => Math.min(3, z + 0.25));
-  const zoomOut = () => setBtnZoom((z) => Math.max(0.5, z - 0.25));
-  const resetZoom = () => {
-    setBtnZoom(1);
-    setPinchScale(1);
-    pinchRef.current = { initialDist: 0, baseScale: 1, active: false };
+  const zoomIn = () => {
+    const z = Math.min(3, zoom + 0.5);
+    setZoom(z);
+    const clamped = constrainPan(z, panX, panY);
+    setPanX(clamped.x);
+    setPanY(clamped.y);
   };
 
-  const imgWidth = SCREEN.width * btnZoom * pinchScale;
+  const zoomOut = () => {
+    const z = Math.max(0.5, zoom - 0.5);
+    setZoom(z);
+    if (z <= 1) {
+      setPanX(0);
+      setPanY(0);
+    } else {
+      const clamped = constrainPan(z, panX, panY);
+      setPanX(clamped.x);
+      setPanY(clamped.y);
+    }
+  };
+
+  const resetZoom = () => {
+    setZoom(1);
+    setPanX(0);
+    setPanY(0);
+    gestureRef.current.mode = "none";
+  };
+
+  const scrollEnabled = zoom <= 1 && panX === 0;
 
   if (loading) {
     return (
@@ -142,7 +217,7 @@ export default function ReaderScreen() {
             </TouchableOpacity>
             <TouchableOpacity onPress={resetZoom}>
               <Text style={[s.zoomLabel, { color: colors.fg3 }]}>
-                {Math.round(btnZoom * pinchScale * 100)}%
+                {Math.round(zoom * 100)}%
               </Text>
             </TouchableOpacity>
             <TouchableOpacity style={[s.zoomBtn, { backgroundColor: colors.bg3 }]} onPress={zoomIn}>
@@ -154,6 +229,7 @@ export default function ReaderScreen() {
 
       <ScrollView
         style={s.scroll}
+        scrollEnabled={scrollEnabled}
         onScroll={(e) => {
           const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
           if (contentSize.height > layoutMeasurement.height) {
@@ -167,17 +243,27 @@ export default function ReaderScreen() {
       >
         <TouchableOpacity
           activeOpacity={1}
-          onPress={() => setShowUI((v) => !v)}
+          onPress={() => {}}
           style={{ alignItems: "center" }}
         >
-          {imageUris.map((uri, i) => (
-            <MangaImage
-              key={`${chapterNum}-${i}`}
-              uri={uri}
-              width={imgWidth}
-              dims={imageSizes[imageNames[i]]}
-            />
-          ))}
+          <View
+            style={{
+              transform: [
+                { translateX: panX },
+                { translateY: panY },
+                { scale: zoom },
+              ],
+            }}
+          >
+            {imageUris.map((uri, i) => (
+              <MangaImage
+                key={`${chapterNum}-${i}`}
+                uri={uri}
+                width={SCREEN.width}
+                dims={imageSizes[imageNames[i]]}
+              />
+            ))}
+          </View>
         </TouchableOpacity>
       </ScrollView>
 
