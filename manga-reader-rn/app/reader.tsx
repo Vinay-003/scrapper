@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -10,46 +10,62 @@ import {
   ActivityIndicator,
   StatusBar,
 } from "react-native";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+} from "react-native-reanimated";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { api, getApiBase, encodeSlug } from "../src/lib/api";
 import { t, isDark } from "../src/lib/theme";
 import { saveRecentlyRead } from "../src/lib/storage";
 
 const SCREEN = Dimensions.get("window");
+const MANGA_ASPECT = 2 / 3;
 
 export default function ReaderScreen() {
   const { slug, chapter } = useLocalSearchParams<{ slug: string; chapter: string }>();
   const router = useRouter();
-  const [images, setImages] = useState<{ uri: string; w: number; h: number }[]>([]);
+  const [imageUris, setImageUris] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [zoom, setZoom] = useState(1);
   const [progress, setProgress] = useState(0);
   const [showUI, setShowUI] = useState(true);
+  const [baseZoom, setBaseZoom] = useState(1);
   const colors = t();
   const chapterNum = parseFloat(chapter!);
   const safeSlug = encodeSlug(slug || "");
 
+  const scale = useSharedValue(1);
+  const savedScale = useSharedValue(1);
+
+  const pinch = Gesture.Pinch()
+    .onUpdate((e) => {
+      scale.value = Math.max(0.5, Math.min(4, savedScale.value * e.scale));
+    })
+    .onEnd(() => {
+      savedScale.value = scale.value;
+    });
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+  }));
+
   useEffect(() => {
     (async () => {
       setLoading(true);
-      setImages([]);
+      setImageUris([]);
+      scale.value = 1;
+      savedScale.value = 1;
+      setBaseZoom(1);
       const data = await api(`/api/manga/${safeSlug}/chapter/${chapterNum}`);
       if (data?.images) {
         const base = await getApiBase();
-        const loaded = await Promise.all(
-          data.images.map(async (name: string) => {
-            const uri = `${base}/api/manga/${safeSlug}/chapter/${chapterNum}/image/${encodeURIComponent(name)}`;
-            try {
-              const dims = await new Promise<{ width: number; height: number }>((resolve) => {
-                Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), () => resolve({ width: 600, height: 900 }));
-              });
-              return { uri, w: dims.width, h: dims.height };
-            } catch {
-              return { uri, w: 600, h: 900 };
-            }
-          })
+        const uris = data.images.map(
+          (name: string) =>
+            `${base}/api/manga/${safeSlug}/chapter/${chapterNum}/image/${encodeURIComponent(name)}`
         );
-        setImages(loaded);
+        setImageUris(uris);
       }
       setLoading(false);
       saveRecentlyRead(slug!, chapterNum);
@@ -57,10 +73,21 @@ export default function ReaderScreen() {
   }, [safeSlug, slug, chapterNum]);
 
   const navigateChapter = (delta: number) => {
-    router.replace({ pathname: "/reader", params: { slug: slug!, chapter: chapterNum + delta } });
+    router.replace({
+      pathname: "/reader",
+      params: { slug: slug!, chapter: chapterNum + delta },
+    });
   };
 
-  const imgWidth = SCREEN.width * zoom;
+  const zoomIn = () => setBaseZoom((z) => Math.min(3, z + 0.25));
+  const zoomOut = () => setBaseZoom((z) => Math.max(0.5, z - 0.25));
+  const resetZoom = () => {
+    setBaseZoom(1);
+    scale.value = withTiming(1);
+    savedScale.value = 1;
+  };
+
+  const imgWidth = SCREEN.width * baseZoom;
 
   if (loading) {
     return (
@@ -73,10 +100,18 @@ export default function ReaderScreen() {
 
   return (
     <View style={[s.container, { backgroundColor: colors.bg }]}>
-      <StatusBar barStyle={isDark() ? "light-content" : "dark-content"} hidden={!showUI} />
+      <StatusBar
+        barStyle={isDark() ? "light-content" : "dark-content"}
+        hidden={!showUI}
+      />
 
       {showUI && (
-        <View style={[s.topBar, { backgroundColor: colors.bg, borderBottomColor: colors.border }]}>
+        <View
+          style={[
+            s.topBar,
+            { backgroundColor: colors.bg, borderBottomColor: colors.border },
+          ]}
+        >
           <TouchableOpacity onPress={() => router.back()} style={s.barBtn}>
             <Text style={[s.barBtnText, { color: colors.accent }]}>←</Text>
           </TouchableOpacity>
@@ -86,14 +121,18 @@ export default function ReaderScreen() {
           <View style={s.zoomRow}>
             <TouchableOpacity
               style={[s.zoomBtn, { backgroundColor: colors.bg3 }]}
-              onPress={() => setZoom((z) => Math.max(0.5, z - 0.15))}
+              onPress={zoomOut}
             >
               <Text style={[s.zoomText, { color: colors.fg }]}>−</Text>
             </TouchableOpacity>
-            <Text style={[s.zoomLabel, { color: colors.fg3 }]}>{Math.round(zoom * 100)}%</Text>
+            <TouchableOpacity onPress={resetZoom}>
+              <Text style={[s.zoomLabel, { color: colors.fg3 }]}>
+                {Math.round(baseZoom * 100)}%
+              </Text>
+            </TouchableOpacity>
             <TouchableOpacity
               style={[s.zoomBtn, { backgroundColor: colors.bg3 }]}
-              onPress={() => setZoom((z) => Math.min(3, z + 0.15))}
+              onPress={zoomIn}
             >
               <Text style={[s.zoomText, { color: colors.fg }]}>+</Text>
             </TouchableOpacity>
@@ -101,56 +140,70 @@ export default function ReaderScreen() {
         </View>
       )}
 
-      <ScrollView
-        style={s.scroll}
-        onScroll={(e) => {
-          const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-          if (contentSize.height > layoutMeasurement.height) {
-            setProgress(
-              Math.round((contentOffset.y / (contentSize.height - layoutMeasurement.height)) * 100)
-            );
-          }
-        }}
-        scrollEventThrottle={16}
-      >
-        <TouchableOpacity
-          activeOpacity={1}
-          onPress={() => setShowUI((v) => !v)}
-          style={{ alignItems: "center", paddingVertical: 4 }}
-        >
-          {images.map((img, i) => {
-            const aspectRatio = img.w / img.h;
-            const imgH = imgWidth / aspectRatio;
-            return (
-              <Image
-                key={`${chapterNum}-${i}`}
-                source={{ uri: img.uri }}
-                style={{
-                  width: imgWidth,
-                  height: imgH,
-                  marginBottom: 2,
-                }}
-                resizeMode="contain"
-              />
-            );
-          })}
-        </TouchableOpacity>
-      </ScrollView>
+      <GestureDetector gesture={pinch}>
+        <Animated.View style={[{ flex: 1 }, animatedStyle]}>
+          <ScrollView
+            style={s.scroll}
+            onScroll={(e) => {
+              const { contentOffset, contentSize, layoutMeasurement } =
+                e.nativeEvent;
+              if (contentSize.height > layoutMeasurement.height) {
+                setProgress(
+                  Math.round(
+                    (contentOffset.y /
+                      (contentSize.height - layoutMeasurement.height)) *
+                      100
+                  )
+                );
+              }
+            }}
+            scrollEventThrottle={16}
+          >
+            <TouchableOpacity
+              activeOpacity={1}
+              onPress={() => setShowUI((v) => !v)}
+              style={{ alignItems: "center", paddingVertical: 4 }}
+            >
+              {imageUris.map((uri, i) => (
+                <Image
+                  key={`${chapterNum}-${i}`}
+                  source={{ uri }}
+                  style={{
+                    width: imgWidth,
+                    height: imgWidth * MANGA_ASPECT,
+                    marginBottom: 2,
+                  }}
+                  resizeMode="contain"
+                />
+              ))}
+            </TouchableOpacity>
+          </ScrollView>
+        </Animated.View>
+      </GestureDetector>
 
       {showUI && (
-        <View style={[s.bottomBar, { backgroundColor: colors.bg, borderTopColor: colors.border }]}>
+        <View
+          style={[
+            s.bottomBar,
+            { backgroundColor: colors.bg, borderTopColor: colors.border },
+          ]}
+        >
           <TouchableOpacity
             style={[s.navBtn, { backgroundColor: colors.bg3 }]}
             onPress={() => navigateChapter(-1)}
           >
             <Text style={[s.navBtnText, { color: colors.fg }]}>← Prev</Text>
           </TouchableOpacity>
-          <Text style={[s.progressText, { color: colors.fg3 }]}>{progress}%</Text>
+          <Text style={[s.progressText, { color: colors.fg3 }]}>
+            {progress}%
+          </Text>
           <TouchableOpacity
             style={[s.navBtn, { backgroundColor: colors.bg3 }]}
             onPress={() => navigateChapter(1)}
           >
-            <Text style={[s.navBtnText, { color: colors.fg }]}>Next →</Text>
+            <Text style={[s.navBtnText, { color: colors.fg }]}>
+              Next →
+            </Text>
           </TouchableOpacity>
         </View>
       )}
@@ -176,7 +229,13 @@ const s = StyleSheet.create({
   barBtnText: { fontSize: 20, fontWeight: "700" },
   barTitle: { fontSize: 15, fontWeight: "700", flex: 1, textAlign: "center" },
   zoomRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  zoomBtn: { width: 34, height: 34, borderRadius: 10, justifyContent: "center", alignItems: "center" },
+  zoomBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+  },
   zoomText: { fontSize: 18, fontWeight: "700" },
   zoomLabel: { fontSize: 12, minWidth: 38, textAlign: "center" },
   bottomBar: {

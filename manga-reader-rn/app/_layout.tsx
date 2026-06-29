@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { View, ActivityIndicator } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { loadTheme, isDark } from "../src/lib/theme";
 
 export default function RootLayout() {
@@ -9,7 +10,7 @@ export default function RootLayout() {
   const [dark, setDark] = useState(true);
 
   useEffect(() => {
-    loadTheme().then((c) => {
+    loadTheme().then(() => {
       setDark(isDark());
       setReady(true);
     });
@@ -24,7 +25,7 @@ export default function RootLayout() {
   }
 
   return (
-    <>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <StatusBar style={dark ? "light" : "dark"} />
       <Stack
         screenOptions={{
@@ -33,6 +34,6 @@ export default function RootLayout() {
           animation: "slide_from_right",
         }}
       />
-    </>
+    </GestureHandlerRootView>
   );
 }
