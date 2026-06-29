@@ -6,10 +6,11 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
+  StatusBar,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { api } from "../src/lib/api";
-import { t } from "../src/lib/theme";
+import { api, encodeSlug } from "../src/lib/api";
+import { t, isDark } from "../src/lib/theme";
 
 interface Chapter {
   number: number;
@@ -23,44 +24,42 @@ export default function MangaScreen() {
   const [title, setTitle] = useState("");
   const [lastChapter, setLastChapter] = useState<number | null>(null);
   const colors = t();
+  const safeSlug = encodeSlug(slug || "");
 
   const load = useCallback(async () => {
-    const data = await api(`/api/manga/${encodeURIComponent(slug!)}`);
+    if (!slug) return;
+    const data = await api(`/api/manga/${safeSlug}`);
     if (data) {
       setChapters(data.chapters || []);
       setTitle(data.title || slug);
       setLastChapter(data.progress?.last_chapter ?? null);
     }
-  }, [slug]);
+  }, [safeSlug, slug]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
   const deleteManga = () => {
-    Alert.alert("Delete Manga", `Delete all chapters of ${title}?`, [
+    Alert.alert("Delete", `Delete all chapters of ${title}?`, [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
-          await api(`/api/manga/${encodeURIComponent(slug!)}/delete`, { method: "DELETE" });
-          router.back();
+          const res = await api(`/api/manga/${safeSlug}/delete`, { method: "DELETE" });
+          if (res?.ok) router.back();
         },
       },
     ]);
   };
 
   const deleteChapter = (num: number) => {
-    Alert.alert("Delete Chapter", `Delete chapter ${num}?`, [
+    Alert.alert("Delete", `Delete chapter ${num}?`, [
       { text: "Cancel", style: "cancel" },
       {
         text: "Delete",
         style: "destructive",
         onPress: async () => {
-          await api(`/api/manga/${encodeURIComponent(slug!)}/chapter/${num}/delete`, {
-            method: "DELETE",
-          });
+          await api(`/api/manga/${safeSlug}/chapter/${num}/delete`, { method: "DELETE" });
           load();
         },
       },
@@ -68,54 +67,50 @@ export default function MangaScreen() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.bg }]}>
-      {/* Header */}
-      <View style={[styles.header, { backgroundColor: colors.bg2, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Text style={[styles.backText, { color: colors.accent }]}>Back</Text>
+    <View style={[s.container, { backgroundColor: colors.bg }]}>
+      <StatusBar barStyle={isDark() ? "light-content" : "dark-content"} />
+
+      <View style={[s.header, { backgroundColor: colors.bg, borderBottomColor: colors.border }]}>
+        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
+          <Text style={[s.backText, { color: colors.accent }]}>← Back</Text>
         </TouchableOpacity>
-        <Text style={[styles.title, { color: colors.fg }]} numberOfLines={1}>
-          {title}
-        </Text>
-        <Text style={[styles.meta, { color: colors.fg2 }]}>
+        <Text style={[s.title, { color: colors.fg }]} numberOfLines={2}>{title}</Text>
+        <Text style={[s.meta, { color: colors.fg3 }]}>
           {chapters.length} chapters
         </Text>
+
         {lastChapter != null && (
           <TouchableOpacity
-            style={[styles.continueBtn, { backgroundColor: colors.accent }]}
-            onPress={() =>
-              router.push({ pathname: "/reader", params: { slug: slug!, chapter: lastChapter } })
-            }
+            style={[s.continueBtn, { backgroundColor: colors.accent }]}
+            onPress={() => router.push({ pathname: "/reader", params: { slug: slug!, chapter: lastChapter } })}
+            activeOpacity={0.8}
           >
-            <Text style={styles.continueText}>Continue Ch {lastChapter}</Text>
+            <Text style={s.continueText}>Continue Chapter {lastChapter}</Text>
           </TouchableOpacity>
         )}
-        <TouchableOpacity style={[styles.deleteBtn, { borderColor: colors.danger }]} onPress={deleteManga}>
-          <Text style={[styles.deleteText, { color: colors.danger }]}>Delete Manga</Text>
+
+        <TouchableOpacity style={[s.deleteBtn, { borderColor: colors.danger }]} onPress={deleteManga}>
+          <Text style={[s.deleteText, { color: colors.danger }]}>Delete Manga</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Chapters */}
       <FlatList
         data={[...chapters].reverse()}
         keyExtractor={(item) => item.number.toString()}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={s.list}
         renderItem={({ item }) => (
           <TouchableOpacity
-            style={[styles.chapterRow, { backgroundColor: colors.bg2, borderColor: colors.border }]}
-            onPress={() =>
-              router.push({ pathname: "/reader", params: { slug: slug!, chapter: item.number } })
-            }
+            style={[s.chapterRow, { backgroundColor: colors.bg2, borderColor: colors.border }]}
+            onPress={() => router.push({ pathname: "/reader", params: { slug: slug!, chapter: item.number } })}
             onLongPress={() => deleteChapter(item.number)}
+            activeOpacity={0.7}
           >
-            <Text style={[styles.chapterNum, { color: colors.accent }]}>
-              {item.number}
-            </Text>
-            <Text style={[styles.chapterName, { color: colors.fg }]} numberOfLines={1}>
-              Chapter {item.number}
-            </Text>
-            <TouchableOpacity onPress={() => deleteChapter(item.number)}>
-              <Text style={[styles.chapterDelete, { color: colors.danger }]}>X</Text>
+            <View style={[s.chNum, { backgroundColor: colors.bg3 }]}>
+              <Text style={[s.chNumText, { color: colors.accent }]}>{item.number}</Text>
+            </View>
+            <Text style={[s.chName, { color: colors.fg }]}>Chapter {item.number}</Text>
+            <TouchableOpacity onPress={() => deleteChapter(item.number)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={[s.chDelete, { color: colors.fg3 }]}>×</Text>
             </TouchableOpacity>
           </TouchableOpacity>
         )}
@@ -124,27 +119,28 @@ export default function MangaScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   container: { flex: 1 },
-  header: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 16, borderBottomWidth: 1 },
-  backBtn: { marginBottom: 10 },
-  backText: { fontSize: 16, fontWeight: "600" },
-  title: { fontSize: 24, fontWeight: "800", marginBottom: 4 },
-  meta: { fontSize: 14, marginBottom: 12 },
-  continueBtn: { paddingVertical: 12, borderRadius: 10, alignItems: "center", marginBottom: 10 },
-  continueText: { color: "#fff", fontWeight: "700", fontSize: 15 },
+  header: { paddingTop: 56, paddingHorizontal: 20, paddingBottom: 16, borderBottomWidth: 1 },
+  backBtn: { marginBottom: 12 },
+  backText: { fontSize: 15, fontWeight: "600" },
+  title: { fontSize: 26, fontWeight: "900", letterSpacing: -0.5, marginBottom: 4 },
+  meta: { fontSize: 13, marginBottom: 14 },
+  continueBtn: { paddingVertical: 14, borderRadius: 12, alignItems: "center", marginBottom: 10 },
+  continueText: { color: "#0a0a0c", fontWeight: "800", fontSize: 15 },
   deleteBtn: { paddingVertical: 10, borderRadius: 10, borderWidth: 1, alignItems: "center" },
-  deleteText: { fontWeight: "600", fontSize: 14 },
+  deleteText: { fontWeight: "600", fontSize: 13 },
   list: { padding: 20 },
   chapterRow: {
     flexDirection: "row",
     alignItems: "center",
-    padding: 14,
+    padding: 12,
     borderRadius: 10,
-    marginBottom: 8,
+    marginBottom: 6,
     borderWidth: 1,
   },
-  chapterNum: { fontSize: 18, fontWeight: "800", width: 50 },
-  chapterName: { flex: 1, fontSize: 15 },
-  chapterDelete: { fontSize: 16, fontWeight: "700", paddingHorizontal: 8 },
+  chNum: { width: 36, height: 36, borderRadius: 8, justifyContent: "center", alignItems: "center", marginRight: 12 },
+  chNumText: { fontSize: 14, fontWeight: "800" },
+  chName: { flex: 1, fontSize: 15, fontWeight: "500" },
+  chDelete: { fontSize: 20, fontWeight: "300", paddingHorizontal: 8 },
 });

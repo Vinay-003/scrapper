@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -8,164 +8,186 @@ import {
   StyleSheet,
   Dimensions,
   ActivityIndicator,
+  StatusBar,
 } from "react-native";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { api } from "../src/lib/api";
-import { getApiBase } from "../src/lib/api";
-import { t } from "../src/lib/theme";
+import { api, getApiBase, encodeSlug } from "../src/lib/api";
+import { t, isDark } from "../src/lib/theme";
 import { saveRecentlyRead } from "../src/lib/storage";
 
-const { width: SCREEN_WIDTH } = Dimensions.get("window");
+const SCREEN = Dimensions.get("window");
 
 export default function ReaderScreen() {
   const { slug, chapter } = useLocalSearchParams<{ slug: string; chapter: string }>();
   const router = useRouter();
-  const scrollRef = useRef<ScrollView>(null);
-  const [images, setImages] = useState<string[]>([]);
+  const [images, setImages] = useState<{ uri: string; w: number; h: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [progress, setProgress] = useState(0);
+  const [showUI, setShowUI] = useState(true);
   const colors = t();
   const chapterNum = parseFloat(chapter!);
+  const safeSlug = encodeSlug(slug || "");
 
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const data = await api(
-        `/api/manga/${encodeURIComponent(slug!)}/chapter/${chapterNum}`
-      );
+      setImages([]);
+      const data = await api(`/api/manga/${safeSlug}/chapter/${chapterNum}`);
       if (data?.images) {
         const base = await getApiBase();
-        const urls = data.images.map(
-          (name: string) =>
-            `${base}/api/manga/${encodeURIComponent(slug!)}/chapter/${chapterNum}/image/${encodeURIComponent(name)}`
+        const loaded = await Promise.all(
+          data.images.map(async (name: string) => {
+            const uri = `${base}/api/manga/${safeSlug}/chapter/${chapterNum}/image/${encodeURIComponent(name)}`;
+            try {
+              const dims = await new Promise<{ width: number; height: number }>((resolve) => {
+                Image.getSize(uri, (w, h) => resolve({ width: w, height: h }), () => resolve({ width: 600, height: 900 }));
+              });
+              return { uri, w: dims.width, h: dims.height };
+            } catch {
+              return { uri, w: 600, h: 900 };
+            }
+          })
         );
-        setImages(urls);
+        setImages(loaded);
       }
       setLoading(false);
       saveRecentlyRead(slug!, chapterNum);
     })();
-  }, [slug, chapterNum]);
-
-  const onScroll = (e: any) => {
-    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
-    if (contentSize.height > 0) {
-      setProgress(
-        Math.round((contentOffset.y / (contentSize.height - layoutMeasurement.height)) * 100)
-      );
-    }
-  };
+  }, [safeSlug, slug, chapterNum]);
 
   const navigateChapter = (delta: number) => {
     router.replace({ pathname: "/reader", params: { slug: slug!, chapter: chapterNum + delta } });
   };
 
+  const imgWidth = SCREEN.width * zoom;
+
   if (loading) {
     return (
-      <View style={[styles.loadingContainer, { backgroundColor: colors.bg }]}>
+      <View style={[s.loadingContainer, { backgroundColor: colors.bg }]}>
         <ActivityIndicator size="large" color={colors.accent} />
-        <Text style={[styles.loadingText, { color: colors.fg2 }]}>Loading chapter...</Text>
+        <Text style={[s.loadingText, { color: colors.fg3 }]}>Loading...</Text>
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.bg }]}>
-      {/* Top Bar */}
-      <View style={[styles.topBar, { backgroundColor: colors.bg2, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.barBtn}>
-          <Text style={[styles.barBtnText, { color: colors.accent }]}>Back</Text>
-        </TouchableOpacity>
-        <Text style={[styles.barTitle, { color: colors.fg }]} numberOfLines={1}>
-          Ch {chapterNum}
-        </Text>
-        <View style={styles.zoomRow}>
-          <TouchableOpacity
-            style={[styles.zoomBtn, { backgroundColor: colors.bg3 }]}
-            onPress={() => setZoom(Math.max(0.5, zoom - 0.1))}
-          >
-            <Text style={[styles.zoomBtnText, { color: colors.fg }]}>-</Text>
-          </TouchableOpacity>
-          <Text style={[styles.zoomLabel, { color: colors.fg2 }]}>
-            {Math.round(zoom * 100)}%
-          </Text>
-          <TouchableOpacity
-            style={[styles.zoomBtn, { backgroundColor: colors.bg3 }]}
-            onPress={() => setZoom(Math.min(3, zoom + 0.1))}
-          >
-            <Text style={[styles.zoomBtnText, { color: colors.fg }]}>+</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+    <View style={[s.container, { backgroundColor: colors.bg }]}>
+      <StatusBar barStyle={isDark() ? "light-content" : "dark-content"} hidden={!showUI} />
 
-      {/* Images */}
+      {showUI && (
+        <View style={[s.topBar, { backgroundColor: colors.bg, borderBottomColor: colors.border }]}>
+          <TouchableOpacity onPress={() => router.back()} style={s.barBtn}>
+            <Text style={[s.barBtnText, { color: colors.accent }]}>←</Text>
+          </TouchableOpacity>
+          <Text style={[s.barTitle, { color: colors.fg }]} numberOfLines={1}>
+            Ch {chapterNum}
+          </Text>
+          <View style={s.zoomRow}>
+            <TouchableOpacity
+              style={[s.zoomBtn, { backgroundColor: colors.bg3 }]}
+              onPress={() => setZoom((z) => Math.max(0.5, z - 0.15))}
+            >
+              <Text style={[s.zoomText, { color: colors.fg }]}>−</Text>
+            </TouchableOpacity>
+            <Text style={[s.zoomLabel, { color: colors.fg3 }]}>{Math.round(zoom * 100)}%</Text>
+            <TouchableOpacity
+              style={[s.zoomBtn, { backgroundColor: colors.bg3 }]}
+              onPress={() => setZoom((z) => Math.min(3, z + 0.15))}
+            >
+              <Text style={[s.zoomText, { color: colors.fg }]}>+</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       <ScrollView
-        ref={scrollRef}
-        style={styles.scroll}
-        onScroll={onScroll}
+        style={s.scroll}
+        onScroll={(e) => {
+          const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+          if (contentSize.height > layoutMeasurement.height) {
+            setProgress(
+              Math.round((contentOffset.y / (contentSize.height - layoutMeasurement.height)) * 100)
+            );
+          }
+        }}
         scrollEventThrottle={16}
       >
-        {images.map((uri, i) => (
-          <Image
-            key={i}
-            source={{ uri }}
-            style={[styles.image, { width: SCREEN_WIDTH * zoom }]}
-            resizeMode="contain"
-          />
-        ))}
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => setShowUI((v) => !v)}
+          style={{ alignItems: "center", paddingVertical: 4 }}
+        >
+          {images.map((img, i) => {
+            const aspectRatio = img.w / img.h;
+            const imgH = imgWidth / aspectRatio;
+            return (
+              <Image
+                key={`${chapterNum}-${i}`}
+                source={{ uri: img.uri }}
+                style={{
+                  width: imgWidth,
+                  height: imgH,
+                  marginBottom: 2,
+                }}
+                resizeMode="contain"
+              />
+            );
+          })}
+        </TouchableOpacity>
       </ScrollView>
 
-      {/* Bottom Bar */}
-      <View style={[styles.bottomBar, { backgroundColor: colors.bg2, borderTopColor: colors.border }]}>
-        <TouchableOpacity
-          style={[styles.navBtn, { backgroundColor: colors.bg3 }]}
-          onPress={() => navigateChapter(-1)}
-        >
-          <Text style={[styles.navBtnText, { color: colors.fg }]}>Prev</Text>
-        </TouchableOpacity>
-        <Text style={[styles.progressText, { color: colors.fg2 }]}>{progress}%</Text>
-        <TouchableOpacity
-          style={[styles.navBtn, { backgroundColor: colors.bg3 }]}
-          onPress={() => navigateChapter(1)}
-        >
-          <Text style={[styles.navBtnText, { color: colors.fg }]}>Next</Text>
-        </TouchableOpacity>
-      </View>
+      {showUI && (
+        <View style={[s.bottomBar, { backgroundColor: colors.bg, borderTopColor: colors.border }]}>
+          <TouchableOpacity
+            style={[s.navBtn, { backgroundColor: colors.bg3 }]}
+            onPress={() => navigateChapter(-1)}
+          >
+            <Text style={[s.navBtnText, { color: colors.fg }]}>← Prev</Text>
+          </TouchableOpacity>
+          <Text style={[s.progressText, { color: colors.fg3 }]}>{progress}%</Text>
+          <TouchableOpacity
+            style={[s.navBtn, { backgroundColor: colors.bg3 }]}
+            onPress={() => navigateChapter(1)}
+          >
+            <Text style={[s.navBtnText, { color: colors.fg }]}>Next →</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+const s = StyleSheet.create({
   container: { flex: 1 },
   loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-  loadingText: { marginTop: 12, fontSize: 15 },
+  loadingText: { marginTop: 12, fontSize: 14, fontWeight: "500" },
+  scroll: { flex: 1 },
   topBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingTop: 50,
     paddingHorizontal: 16,
-    paddingBottom: 12,
+    paddingBottom: 10,
     borderBottomWidth: 1,
   },
   barBtn: { padding: 4 },
-  barBtnText: { fontSize: 16, fontWeight: "600" },
-  barTitle: { fontSize: 16, fontWeight: "700", flex: 1, textAlign: "center" },
+  barBtnText: { fontSize: 20, fontWeight: "700" },
+  barTitle: { fontSize: 15, fontWeight: "700", flex: 1, textAlign: "center" },
   zoomRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-  zoomBtn: { width: 32, height: 32, borderRadius: 8, justifyContent: "center", alignItems: "center" },
-  zoomBtnText: { fontSize: 18, fontWeight: "700" },
-  zoomLabel: { fontSize: 12, minWidth: 36, textAlign: "center" },
-  scroll: { flex: 1 },
-  image: { alignSelf: "center", minHeight: 400 },
+  zoomBtn: { width: 34, height: 34, borderRadius: 10, justifyContent: "center", alignItems: "center" },
+  zoomText: { fontSize: 18, fontWeight: "700" },
+  zoomLabel: { fontSize: 12, minWidth: 38, textAlign: "center" },
   bottomBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 10,
     borderTopWidth: 1,
   },
-  navBtn: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 },
-  navBtnText: { fontWeight: "600", fontSize: 14 },
-  progressText: { fontSize: 14 },
+  navBtn: { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 10 },
+  navBtnText: { fontWeight: "700", fontSize: 14 },
+  progressText: { fontSize: 13 },
 });

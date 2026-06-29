@@ -1,53 +1,76 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-const THEME_KEY = "manga_theme";
+export interface ThemeColors {
+  bg: string;
+  bg2: string;
+  bg3: string;
+  fg: string;
+  fg2: string;
+  fg3: string;
+  accent: string;
+  accentDim: string;
+  danger: string;
+  success: string;
+  border: string;
+  card: string;
+  cardBorder: string;
+  shadow: string;
+}
 
-export type Theme = "dark" | "light";
-
-export const colors = {
-  dark: {
-    bg: "#0a0a0a",
-    bg2: "#141414",
-    bg3: "#1e1e1e",
-    fg: "#f0f0f0",
-    fg2: "#888",
-    border: "#2a2a2a",
-    accent: "#8b5cf6",
-    accent2: "#7c3aed",
-    danger: "#ef4444",
-    success: "#22c55e",
-  },
-  light: {
-    bg: "#f8f8f8",
-    bg2: "#fff",
-    bg3: "#eee",
-    fg: "#1a1a1a",
-    fg2: "#666",
-    border: "#ddd",
-    accent: "#7c3aed",
-    accent2: "#6d28d9",
-    danger: "#ef4444",
-    success: "#22c55e",
-  },
+const DARK: ThemeColors = {
+  bg: "#0a0a0c",
+  bg2: "#131318",
+  bg3: "#1c1c24",
+  fg: "#f0f0f5",
+  fg2: "#8a8a9a",
+  fg3: "#55556a",
+  accent: "#00e5c3",
+  accentDim: "#00b89a",
+  danger: "#ff4d6a",
+  success: "#00e5c3",
+  border: "#1e1e2a",
+  card: "#131318",
+  cardBorder: "#1e1e2a",
+  shadow: "rgba(0,229,195,0.06)",
 };
 
-let currentTheme: Theme = "dark";
+const LIGHT: ThemeColors = {
+  bg: "#f5f5f7",
+  bg2: "#ffffff",
+  bg3: "#eaeaef",
+  fg: "#0a0a0c",
+  fg2: "#6a6a7a",
+  fg3: "#9a9aaa",
+  accent: "#008b76",
+  accentDim: "#006b5a",
+  danger: "#d93050",
+  success: "#008b76",
+  border: "#d8d8e0",
+  card: "#ffffff",
+  cardBorder: "#e0e0e8",
+  shadow: "rgba(0,0,0,0.04)",
+};
 
-export async function loadTheme(): Promise<Theme> {
-  const stored = await AsyncStorage.getItem(THEME_KEY);
-  currentTheme = (stored as Theme) || "dark";
-  return currentTheme;
+const STORAGE_KEY = "manga_theme";
+
+let _dark = true;
+
+export function t(): ThemeColors {
+  return _dark ? DARK : LIGHT;
 }
 
-export async function setTheme(t: Theme): Promise<void> {
-  currentTheme = t;
-  await AsyncStorage.setItem(THEME_KEY, t);
+export function isDark(): boolean {
+  return _dark;
 }
 
-export function getTheme(): Theme {
-  return currentTheme;
+export async function loadTheme(): Promise<ThemeColors> {
+  const v = await AsyncStorage.getItem(STORAGE_KEY);
+  _dark = v !== "light";
+  return t();
 }
 
-export function t() {
-  return colors[currentTheme];
+export async function toggleTheme(): Promise<ThemeColors> {
+  _dark = !_dark;
+  await AsyncStorage.setItem(STORAGE_KEY, _dark ? "dark" : "light");
+  return t();
 }
