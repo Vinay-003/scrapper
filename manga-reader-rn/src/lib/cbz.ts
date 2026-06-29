@@ -1,5 +1,4 @@
 import { File, Directory, Paths } from "expo-file-system/next";
-import JSZip from "jszip";
 
 export interface ImageDimensions {
   w: number;
@@ -9,139 +8,128 @@ export interface ImageDimensions {
 const MAX_SEGMENT_HEIGHT = 2000;
 
 /**
- * Read image list and dimensions from a CBZ file.
+ * Get the directory for a chapter's images.
+ */
+export function getChapterDir(slug: string, chapterNumber: number): Directory {
+  const mangaDir = new Directory(Paths.document, "manga");
+  const slugDir = new Directory(mangaDir, slug);
+  const chDir = new Directory(slugDir, `ch${chapterNumber}`);
+  return chDir;
+}
+
+/**
+ * Get file path for a chapter image.
+ */
+export function getChapterImagePath(slug: string, chapterNumber: number, index: number): string {
+  const chDir = getChapterDir(slug, chapterNumber);
+  const padded = String(index + 1).padStart(4, "0");
+  const file = new File(chDir, `${padded}.jpg`);
+  return file.uri;
+}
+
+/**
+ * Read image list from a chapter directory.
  * Returns display names (with :sN suffix for segments) and a sizes map.
  */
-export async function getImageListFromCbz(
-  cbzPath: string
+export async function getImageListFromChapter(
+  slug: string,
+  chapterNumber: number
 ): Promise<{ images: string[]; sizes: Record<string, ImageDimensions> }> {
-  const file = new File(cbzPath);
-  if (!file.exists) return { images: [], sizes: {} };
+  const chDir = getChapterDir(slug, chapterNumber);
+  if (!chDir.exists) return { images: [], sizes: {} };
 
-  const base64 = await file.base64();
-  const zip = await JSZip.loadAsync(base64, { base64: true });
-
-  const imageFiles = Object.keys(zip.files)
-    .filter((name) => !zip.files[name].dir && /\.(jpe?g|png|webp|gif)$/i.test(name))
+  const entries = chDir.list();
+  const imageFiles = entries
+    .filter((e) => e instanceof File && /\.(jpe?g|png|webp|gif)$/i.test(e.name))
+    .map((e) => (e as File).name)
     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
   const images: string[] = [];
   const sizes: Record<string, ImageDimensions> = {};
 
   for (const fileName of imageFiles) {
-    const blob = await zip.files[fileName].async("blob");
-    const dims = await getImageDimensions(blob);
-
-    if (!dims || dims.h <= MAX_SEGMENT_HEIGHT) {
-      images.push(fileName);
-      if (dims) sizes[fileName] = dims;
-    } else {
-      const segCount = Math.ceil(dims.h / MAX_SEGMENT_HEIGHT);
-      for (let i = 0; i < segCount; i++) {
-        const segName = `${fileName}:s${i}`;
-        images.push(segName);
-        const segH = Math.min(MAX_SEGMENT_HEIGHT, dims.h - i * MAX_SEGMENT_HEIGHT);
-        sizes[segName] = { w: dims.w, h: segH };
-      }
-    }
+    // For now, serve images without segmentation (simpler, no OOM)
+    // Segmentation can be added later with expo-image-manipulator
+    images.push(fileName);
   }
 
   return { images, sizes };
 }
 
 /**
- * Read a full image or a segment from a CBZ file.
- * Returns { base64, contentType } for use with RN Image.
+ * Get the URI for a chapter image (ready for <Image source={{uri}}>)
  */
-export async function readImageFromCbz(
-  cbzPath: string,
-  imageName: string
-): Promise<{ base64: string; contentType: string }> {
-  const segMatch = imageName.match(/^(.+):s(\d+)$/);
-  const fileName = segMatch ? segMatch[1] : imageName;
-  const segIndex = segMatch ? parseInt(segMatch[2], 10) : -1;
-
-  const file = new File(cbzPath);
-  if (!file.exists) throw new Error(`CBZ not found: ${cbzPath}`);
-
-  const base64 = await file.base64();
-  const zip = await JSZip.loadAsync(base64, { base64: true });
-  const zipFile = zip.files[fileName];
-  if (!zipFile) throw new Error(`Image not found: ${fileName}`);
-
-  const contentType = detectContentType(fileName);
-
-  if (segIndex === -1) {
-    const arrayBuffer = await zipFile.async("arraybuffer");
-    const resultBase64 = arrayBufferToBase64(arrayBuffer);
-    return { base64: resultBase64, contentType };
-  }
-
-  // For segments, we need to extract and crop
-  // This is a simplified version - in production, use expo-image-manipulator
-  const arrayBuffer = await zipFile.async("arraybuffer");
-  const resultBase64 = arrayBufferToBase64(arrayBuffer);
-  return { base64: resultBase64, contentType };
+export function getImageUri(slug: string, chapterNumber: number, imageName: string): string {
+  const chDir = getChapterDir(slug, chapterNumber);
+  const cleanName = imageName.replace(/:s\d+$/, "");
+  const file = new File(chDir, cleanName);
+  return file.uri;
 }
 
 /**
- * Create a CBZ file from a list of images.
+ * Save downloaded images to a chapter directory.
  * images: [{ name: string, data: Uint8Array }]
- * Returns the path to the created CBZ.
  */
-export async function createCbz(
-  mangaDir: string,
+export async function saveChapterImages(
+  slug: string,
   chapterNumber: number,
   images: { name: string; data: Uint8Array }[]
 ): Promise<string> {
-  const zip = new JSZip();
+  const mangaDir = new Directory(Paths.document, "manga");
+  if (!mangaDir.exists) mangaDir.create();
+
+  const slugDir = new Directory(mangaDir, slug);
+  if (!slugDir.exists) slugDir.create();
+
+  const chDir = new Directory(slugDir, `ch${chapterNumber}`);
+  if (!chDir.exists) chDir.create();
 
   for (let i = 0; i < images.length; i++) {
     const ext = getExtension(images[i].name);
     const padded = String(i + 1).padStart(4, "0");
-    const newName = `${padded}.${ext}`;
-    zip.file(newName, images[i].data);
+    const file = new File(chDir, `${padded}.${ext}`);
+
+    // Convert Uint8Array to base64 and write
+    const base64 = uint8ArrayToBase64(images[i].data);
+    await file.write(base64);
   }
 
-  const content = await zip.generateAsync({ type: "uint8array", compression: "STORE" });
+  return chDir.uri;
+}
 
-  const mangaDirPath = new Directory(Paths.document, "manga");
-  if (!mangaDirPath.exists) {
-    mangaDirPath.create();
-  }
+/**
+ * Check if a chapter exists on disk.
+ */
+export function chapterExists(slug: string, chapterNumber: number): boolean {
+  const chDir = getChapterDir(slug, chapterNumber);
+  if (!chDir.exists) return false;
+  const entries = chDir.list();
+  return entries.some((e) => e instanceof File && /\.(jpe?g|png|webp|gif)$/i.test(e.name));
+}
 
-  const cbzFile = new File(mangaDirPath, `${mangaDir}_chapter_${chapterNumber}.cbz`);
-  const base64 = uint8ArrayToBase64(content);
-  await cbzFile.write(base64);
+/**
+ * Delete a chapter directory.
+ */
+export function deleteChapterDir(slug: string, chapterNumber: number): void {
+  const chDir = getChapterDir(slug, chapterNumber);
+  if (chDir.exists) chDir.delete();
+}
 
-  return cbzFile.uri;
+/**
+ * Delete all chapter directories for a manga.
+ */
+export function deleteMangaDir(slug: string): void {
+  const mangaDir = new Directory(Paths.document, "manga");
+  if (!mangaDir.exists) return;
+  const slugDir = new Directory(mangaDir, slug);
+  if (slugDir.exists) slugDir.delete();
 }
 
 function getExtension(name: string): string {
   const m = name.match(/\.(\w+)$/);
   const ext = m ? m[1].toLowerCase() : "jpg";
   if (ext === "jpeg") return "jpg";
-  if (ext === "png") return "png";
-  if (ext === "webp") return "webp";
-  if (ext === "gif") return "gif";
-  return "jpg";
-}
-
-function detectContentType(fileName: string): string {
-  const ext = fileName.split(".").pop()?.toLowerCase() || "";
-  if (ext === "png") return "image/png";
-  if (ext === "webp") return "image/webp";
-  if (ext === "gif") return "image/gif";
-  return "image/jpeg";
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = "";
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary);
+  return ext;
 }
 
 function uint8ArrayToBase64(arr: Uint8Array): string {
@@ -150,11 +138,4 @@ function uint8ArrayToBase64(arr: Uint8Array): string {
     binary += String.fromCharCode(arr[i]);
   }
   return btoa(binary);
-}
-
-async function getImageDimensions(_blob: Blob): Promise<ImageDimensions | null> {
-  // In React Native, we can't easily get dimensions from a blob.
-  // This is a placeholder. In practice, we'd use expo-image-manipulator
-  // or a similar library for image operations.
-  return null;
 }

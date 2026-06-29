@@ -1,5 +1,13 @@
 import { File, Directory, Paths } from "expo-file-system/next";
-import { getImageListFromCbz, readImageFromCbz, ImageDimensions } from "./cbz";
+import {
+  getImageListFromChapter,
+  getImageUri,
+  getChapterDir,
+  saveChapterImages,
+  chapterExists,
+  deleteChapterDir,
+  deleteMangaDir,
+} from "./cbz";
 import { loadJson, saveJson } from "./storage";
 
 const TRACKING_FILE = "manga_tracking.json";
@@ -28,6 +36,7 @@ function slugToTitle(slug: string): string {
 
 /**
  * List all manga in the local storage.
+ * Manga are stored as: manga/{slug}/ch{num}/{images}
  */
 export async function listManga(): Promise<
   { slug: string; title: string; chapters: number; last_chapter: number | null }[]
@@ -45,23 +54,30 @@ export async function listManga(): Promise<
   }[] = [];
 
   for (const entry of entries) {
-    if (!(entry instanceof File)) continue;
-    const name = entry.name;
-    if (!name.endsWith(".cbz")) continue;
+    if (!(entry instanceof Directory)) continue;
+    const slug = entry.name;
 
-    // Extract manga slug from filename (e.g., "sword-sheath-s-child_chapter_1.cbz")
-    const match = name.match(/^(.+?)_chapter_\d+(?:\.\d+)?\.cbz$/);
-    if (!match) continue;
+    // Count chapter directories (ch1, ch2, etc.)
+    const slugDir = new Directory(baseDir, slug);
+    const slugEntries = slugDir.list();
+    let chapterCount = 0;
 
-    const slug = match[1];
-    const existing = result.find((r) => r.slug === slug);
-    if (existing) {
-      existing.chapters++;
-    } else {
+    for (const se of slugEntries) {
+      if (se instanceof Directory && /^ch\d+$/.test(se.name)) {
+        // Verify it has images
+        const chDir = new Directory(slugDir, se.name);
+        const chEntries = chDir.list();
+        if (chEntries.some((e) => e instanceof File && /\.(jpe?g|png|webp|gif)$/i.test(e.name))) {
+          chapterCount++;
+        }
+      }
+    }
+
+    if (chapterCount > 0) {
       result.push({
         slug,
         title: slugToTitle(slug),
-        chapters: 1,
+        chapters: chapterCount,
         last_chapter: (tracking[slug]?.last_chapter as number) ?? null,
       });
     }
@@ -75,19 +91,21 @@ export async function listManga(): Promise<
  */
 export async function getMangaDetail(slug: string): Promise<MangaDetail | null> {
   const baseDir = getMangaDir();
-  if (!baseDir.exists) return null;
+  const slugDir = new Directory(baseDir, slug);
+  if (!slugDir.exists) return null;
 
-  const entries = baseDir.list();
+  const slugEntries = slugDir.list();
   const chapters: ChapterInfo[] = [];
 
-  for (const entry of entries) {
-    if (!(entry instanceof File)) continue;
-    const name = entry.name;
-    if (!name.startsWith(slug + "_chapter_") || !name.endsWith(".cbz")) continue;
-    const numStr = name.replace(`${slug}_chapter_`, "").replace(".cbz", "");
-    const num = parseFloat(numStr);
-    if (!isNaN(num)) {
-      chapters.push({ number: num, file: name });
+  for (const entry of slugEntries) {
+    if (!(entry instanceof Directory)) continue;
+    const chMatch = entry.name.match(/^ch(\d+(?:\.\d+)?)$/);
+    if (!chMatch) continue;
+
+    const num = parseFloat(chMatch[1]);
+    // Verify chapter has images
+    if (chapterExists(slug, num)) {
+      chapters.push({ number: num, file: entry.name });
     }
   }
 
@@ -111,62 +129,28 @@ export async function getMangaDetail(slug: string): Promise<MangaDetail | null> 
 export async function getChapterImages(
   slug: string,
   chapterNumber: number
-): Promise<{ images: string[]; sizes: Record<string, ImageDimensions> } | null> {
-  const cbzPath = getCbzPath(slug, chapterNumber);
-  const file = new File(cbzPath);
-  if (!file.exists) return null;
-
-  return getImageListFromCbz(cbzPath);
+): Promise<{ images: string[]; sizes: Record<string, { w: number; h: number }> } | null> {
+  if (!chapterExists(slug, chapterNumber)) return null;
+  return getImageListFromChapter(slug, chapterNumber);
 }
 
 /**
  * Get image as a file URI that React Native Image can display directly.
- * Extracts the image from CBZ to a temp file.
  */
-export async function getImageFileUri(
+export function getImageFileUri(
   slug: string,
   chapterNumber: number,
   imageName: string
-): Promise<string | null> {
-  const cbzPath = getCbzPath(slug, chapterNumber);
-  const file = new File(cbzPath);
-  if (!file.exists) return null;
-
-  const cleanName = imageName.replace(/:s\d+$/, "").replace(/[^a-zA-Z0-9._-]/g, "_");
-  const cacheDir = new Directory(Paths.cache, "images");
-  if (!cacheDir.exists) {
-    cacheDir.create();
-  }
-
-  // Check cache
-  const ext = ".jpg";
-  const cachedFile = new File(cacheDir, `img_${slug}_${chapterNumber}_${cleanName}${ext}`);
-  if (cachedFile.exists) return cachedFile.uri;
-
-  try {
-    const { base64, contentType } = await readImageFromCbz(cbzPath, imageName);
-    const fileExt = contentType.includes("png") ? ".png" : contentType.includes("webp") ? ".webp" : ".jpg";
-    const filePath = new File(cacheDir, `img_${slug}_${chapterNumber}_${cleanName}${fileExt}`);
-    await filePath.write(base64);
-    return filePath.uri;
-  } catch {
-    return null;
-  }
+): string | null {
+  if (!chapterExists(slug, chapterNumber)) return null;
+  return getImageUri(slug, chapterNumber, imageName);
 }
 
 /**
- * Delete an entire manga and its CBZ files.
+ * Delete an entire manga and its chapter directories.
  */
 export async function deleteManga(slug: string): Promise<boolean> {
-  const baseDir = getMangaDir();
-  if (!baseDir.exists) return false;
-
-  const entries = baseDir.list();
-  for (const entry of entries) {
-    if (entry instanceof File && entry.name.startsWith(slug)) {
-      entry.delete();
-    }
-  }
+  deleteMangaDir(slug);
 
   const tracking = (await loadJson(TRACKING_FILE, {})) as Record<string, Record<string, unknown>>;
   delete tracking[slug];
@@ -175,13 +159,11 @@ export async function deleteManga(slug: string): Promise<boolean> {
 }
 
 /**
- * Delete a single chapter CBZ.
+ * Delete a single chapter.
  */
 export async function deleteChapter(slug: string, chapterNumber: number): Promise<boolean> {
-  const cbzPath = getCbzPath(slug, chapterNumber);
-  const file = new File(cbzPath);
-  if (!file.exists) return false;
-  file.delete();
+  if (!chapterExists(slug, chapterNumber)) return false;
+  deleteChapterDir(slug, chapterNumber);
   return true;
 }
 
@@ -221,10 +203,4 @@ export async function addComment(slug: string, comment: unknown): Promise<void> 
   if (!allComments[slug]) allComments[slug] = [];
   allComments[slug].push(comment);
   await saveJson(COMMENTS_FILE, allComments);
-}
-
-function getCbzPath(slug: string, chapterNumber: number): string {
-  const mangaDir = getMangaDir();
-  const file = new File(mangaDir, `${slug}_chapter_${chapterNumber}.cbz`);
-  return file.uri;
 }

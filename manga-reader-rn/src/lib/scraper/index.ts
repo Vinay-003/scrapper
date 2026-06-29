@@ -1,11 +1,9 @@
-import { Directory, Paths } from "expo-file-system/next";
 import { getAdapter, detectSite } from "./registry";
 import { BaseSiteAdapter, ChapterInfo } from "./base";
-import { createCbz } from "../cbz";
+import { saveChapterImages } from "../cbz";
 import { loadJson, saveJson } from "../storage";
 
 const JOBS_FILE = "scraper_jobs.json";
-const MANGA_DIR = new Directory(Paths.document, "manga");
 
 export interface ScraperJob {
   id: string;
@@ -259,13 +257,7 @@ async function runScraperJob(job: ScraperJob): Promise<void> {
       images.sort((a, b) => a.name.localeCompare(b.name));
 
       if (images.length > 0) {
-        // Ensure manga directory exists
-        const dirPath = MANGA_DIR;
-        if (!dirPath.exists) {
-          dirPath.create();
-        }
-
-        await createCbz(slug!, chapter.number, images);
+        await saveChapterImages(slug!, chapter.number, images);
         addLog(job, `Chapter ${chapter.number}: saved (${images.length} images)`);
         job.completedChapters++;
       } else {
