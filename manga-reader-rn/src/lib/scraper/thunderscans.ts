@@ -4,7 +4,7 @@ import {
   extractChapterNumber,
   normalizeUrl,
 } from "./base";
-import { selectLinks } from "../html";
+import { parseHtml, extractLinks } from "../html";
 
 export class ThunderscansAdapter extends BaseSiteAdapter {
   readonly name = "Thunderscans";
@@ -16,7 +16,6 @@ export class ThunderscansAdapter extends BaseSiteAdapter {
   }
 
   getMangaSlug(url: string): string | null {
-    // Python: /comics/{slug}/ or /{slug}-chapter-{num}/
     const m1 = url.match(/\/comics\/([^/]+)/);
     if (m1) return m1[1];
     const m2 = url.match(/\/([^/]+)-chapter-\d+/);
@@ -32,17 +31,15 @@ export class ThunderscansAdapter extends BaseSiteAdapter {
   }
 
   getImageUrlsFromPage(html: string): string[] {
-    // Python: match = re.search(r'ts_reader\.run\(({.*?})\);', html, re.DOTALL)
+    // ts_reader.run() JavaScript call
     const match = html.match(/ts_reader\.run\((\{[\s\S]*?\})\)/);
     if (!match) return [];
 
     try {
-      // Python: data_str = re.sub(r',\s*}', '}', data_str); re.sub(r',\s*]', ']', data_str)
       let dataStr = match[1];
       dataStr = dataStr.replace(/,\s*}/g, "}").replace(/,\s*]/g, "]");
       const data = JSON.parse(dataStr);
 
-      // Python: for source in data.get('sources', []): images.extend(source.get('images', []))
       const urls: string[] = [];
       for (const source of data.sources || []) {
         urls.push(...(source.images || []));
@@ -54,15 +51,14 @@ export class ThunderscansAdapter extends BaseSiteAdapter {
   }
 
   getAvailableChapters(html: string): ChapterInfo[] {
+    const root = parseHtml(html);
     const chapters: ChapterInfo[] = [];
     const seen = new Set<number>();
 
-    // Python: for selector in selectors: chapter_links = soup.select(selector)
     const selectors = [".chapter-list a[href*='chapter']", "a[href*='-chapter-']", ".version-chap a"];
     for (const sel of selectors) {
-      const links = selectLinks(html, sel);
+      const links = extractLinks(root, sel);
       for (const link of links) {
-        // Python: chapter_num = extract_chapter_number(text); if None: extract_chapter_number(href)
         const num = extractChapterNumber(link.text) || extractChapterNumber(link.href);
         if (num !== null && !seen.has(num)) {
           seen.add(num);
@@ -109,12 +105,10 @@ export class RoliascanAdapter extends BaseSiteAdapter {
   }
 
   getImageUrlsFromPage(html: string): string[] {
-    // Python: img_urls = re.findall(r'https://mangataro\.yachts/storage/chapters/[^\s"<>]+', html)
     const urls: string[] = [];
     const regex = /https?:\/\/mangataro\.yachts\/storage\/chapters\/[^\s"'<>]+/gi;
     let match;
     while ((match = regex.exec(html)) !== null) {
-      // Python: url = url.rstrip('\'"')
       const url = match[0].replace(/['"]+$/, "");
       if (!urls.includes(url)) {
         urls.push(url);
@@ -124,13 +118,12 @@ export class RoliascanAdapter extends BaseSiteAdapter {
   }
 
   getAvailableChapters(html: string): ChapterInfo[] {
+    const root = parseHtml(html);
     const chapters: ChapterInfo[] = [];
     const seen = new Set<number>();
 
-    // Python: chapter_links = soup.select('a[href*="/read/"]')
-    const links = selectLinks(html, 'a[href*="/read/"]');
+    const links = extractLinks(root, 'a[href*="/read/"]');
     for (const link of links) {
-      // Python: chapter_num = extract_chapter_number(text); if None: extract_chapter_number(href)
       const num = extractChapterNumber(link.text) || extractChapterNumber(link.href);
       if (num !== null && !seen.has(num)) {
         seen.add(num);

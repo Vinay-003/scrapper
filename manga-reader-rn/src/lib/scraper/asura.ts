@@ -4,7 +4,7 @@ import {
   extractChapterNumber,
   normalizeUrl,
 } from "./base";
-import { selectInner, findImages, selectLinks } from "../html";
+import { parseHtml, extractImages, extractLinks } from "../html";
 
 export class AsuraAdapter extends BaseSiteAdapter {
   readonly name = "AsuraScans";
@@ -31,29 +31,26 @@ export class AsuraAdapter extends BaseSiteAdapter {
   }
 
   getImageUrlsFromPage(html: string): string[] {
-    // Python: reader_area = soup.select_one('#readerarea'); for img in reader_area.find_all('img')
-    const readerArea = selectInner(html, "#readerarea");
+    const root = parseHtml(html);
+    const readerArea = root.querySelector("#readerarea");
     if (!readerArea) return [];
-
-    // Python: url = img.get('data-src') or img.get('src') — preferDataSrc=true
-    const imgs = findImages(readerArea, true);
+    const imgs = extractImages(readerArea, true);
     return imgs.map((u) => this._decodeAsuraUrl(u));
   }
 
   getAvailableChapters(html: string): ChapterInfo[] {
+    const root = parseHtml(html);
     const chapters: ChapterInfo[] = [];
     const seen = new Set<number>();
 
-    // Python: chapter_list = soup.select('.eplister ul li a')
-    const links = selectLinks(html, ".eplister ul li a");
+    const links = extractLinks(root, ".eplister ul li a");
     for (const link of links) {
-      // Python: chapter_num = extract_chapter_number(text); if None: extract_chapter_number(href)
       const num = extractChapterNumber(link.text) || extractChapterNumber(link.href);
       if (num !== null && !seen.has(num)) {
         seen.add(num);
         chapters.push({
           number: num,
-          url: normalizeUrl(link.href, `https://asurascanz.com/`),
+          url: normalizeUrl(link.href, "https://asurascanz.com/"),
           title: link.text,
         });
       }
@@ -67,7 +64,6 @@ export class AsuraAdapter extends BaseSiteAdapter {
   }
 
   private _decodeAsuraUrl(url: string): string {
-    // Python: decode asura's base64 encoded image URLs
     try {
       const u = new URL(url);
       const parts = u.pathname.split("/");
@@ -75,16 +71,11 @@ export class AsuraAdapter extends BaseSiteAdapter {
         try {
           const decoded = atob(parts[i]);
           if (decoded.includes("imagemanga.online")) {
-            const newUrl = decoded.startsWith("http") ? decoded : `https://${decoded}`;
-            return newUrl;
+            return decoded.startsWith("http") ? decoded : `https://${decoded}`;
           }
-        } catch {
-          // Not base64, continue
-        }
+        } catch {}
       }
-    } catch {
-      // Invalid URL
-    }
+    } catch {}
     return url;
   }
 }
