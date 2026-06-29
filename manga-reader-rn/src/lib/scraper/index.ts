@@ -160,23 +160,24 @@ async function runScraperJob(job: ScraperJob): Promise<void> {
     addLog(job, `Manga page fetch error: ${err.message}`);
   }
 
-  // Fallback to all chapters page
-  if (chapters.length === 0) {
-    const allUrl = adapter.getAllChaptersUrl(slug);
-    if (allUrl) {
-      addLog(job, `Trying all chapters page: ${allUrl}`);
-      try {
-        const resp = await fetchWithTimeout(allUrl, { headers: adapter["headers"] });
-        addLog(job, `All chapters page status: ${resp.status}`);
-        if (resp.ok) {
-          const html = await resp.text();
-          addLog(job, `All chapters HTML length: ${html.length}`);
-          chapters = adapter.getAvailableChapters(html);
-          addLog(job, `Chapters from all-chapters page: ${chapters.length}`);
+  // Always try all chapters page if available (main page often only shows recent chapters)
+  const allUrl = adapter.getAllChaptersUrl(slug);
+  if (allUrl) {
+    addLog(job, `Trying all chapters page: ${allUrl}`);
+    try {
+      const resp = await fetchWithTimeout(allUrl, { headers: adapter["headers"] });
+      addLog(job, `All chapters page status: ${resp.status}`);
+      if (resp.ok) {
+        const html = await resp.text();
+        addLog(job, `All chapters HTML length: ${html.length}`);
+        const allChapters = adapter.getAvailableChapters(html);
+        addLog(job, `Chapters from all-chapters page: ${allChapters.length}`);
+        if (allChapters.length > chapters.length) {
+          chapters = allChapters;
         }
-      } catch (err: any) {
-        addLog(job, `All chapters page error: ${err.message}`);
       }
+    } catch (err: any) {
+      addLog(job, `All chapters page error: ${err.message}`);
     }
   }
 
