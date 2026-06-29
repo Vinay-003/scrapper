@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -23,30 +23,10 @@ function dist(a: { pageX: number; pageY: number }, b: { pageX: number; pageY: nu
   return Math.sqrt((a.pageX - b.pageX) ** 2 + (a.pageY - b.pageY) ** 2);
 }
 
-function getSizeAsync(uri: string): Promise<{ w: number; h: number }> {
-  return new Promise((resolve) => {
-    Image.getSize(
-      uri,
-      (w, h) => resolve({ w, h }),
-      () => resolve({ w: 0, h: 0 })
-    );
-  });
-}
-
-function MangaImage({ uri, width, dims }: { uri: string; width: number; dims: { w: number; h: number } }) {
-  if (dims.w === 0) {
-    return <Image source={{ uri }} style={{ width, aspectRatio: 2 / 3 }} resizeMode="contain" />;
-  }
-  const height = (width * dims.h) / dims.w;
-  return <Image source={{ uri }} style={{ width, height }} resizeMode="contain" />;
-}
-
 export default function ReaderScreen() {
   const { slug, chapter } = useLocalSearchParams<{ slug: string; chapter: string }>();
   const router = useRouter();
   const [imageUris, setImageUris] = useState<string[]>([]);
-  const [imageNames, setImageNames] = useState<string[]>([]);
-  const [imageDims, setImageDims] = useState<Record<string, { w: number; h: number }>>({});
   const [loading, setLoading] = useState(true);
   const [showUI, setShowUI] = useState(true);
   const [zoom, setZoom] = useState(1);
@@ -82,8 +62,6 @@ export default function ReaderScreen() {
     (async () => {
       setLoading(true);
       setImageUris([]);
-      setImageNames([]);
-      setImageDims({});
       setZoom(1);
       setPanX(0);
       setPanY(0);
@@ -97,23 +75,12 @@ export default function ReaderScreen() {
 
       const data = await getChapterImages(slug!, chapterNum);
       if (data) {
-        setImageNames(data.images);
-
         const uris: string[] = [];
         for (const name of data.images) {
           const uri = getImageFileUri(slug!, chapterNum, name);
-          uris.push(uri || "");
+          if (uri) uris.push(uri);
         }
         setImageUris(uris);
-
-        const dimsMap: Record<string, { w: number; h: number }> = {};
-        const sizePromises = uris.map(async (uri, i) => {
-          if (!uri) return;
-          const dims = await getSizeAsync(uri);
-          dimsMap[data.images[i]] = dims;
-        });
-        await Promise.all(sizePromises);
-        setImageDims(dimsMap);
       }
       setLoading(false);
       saveRecentlyRead(slug!, chapterNum);
@@ -318,30 +285,24 @@ export default function ReaderScreen() {
         scrollEnabled={zoom <= 1}
         onScroll={handleScroll}
         scrollEventThrottle={200}
-        removeClippedSubviews={true}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
       >
-        <View style={s.imageContainer}>
-          <View
-            style={[
-              s.imageScaler,
-              {
-                transformOrigin: "top left" as any,
-                transform: [{ translateX: panX }, { translateY: panY }, { scale: zoom }],
-              },
-            ]}
-          >
-            {imageUris.map((uri, i) => (
-              <MangaImage
-                key={`${chapterNum}-${i}`}
-                uri={uri}
-                width={SCREEN.width}
-                dims={imageDims[imageNames[i]] || { w: 0, h: 0 }}
-              />
-            ))}
-          </View>
+        <View
+          style={{
+            transformOrigin: "top left" as any,
+            transform: [{ translateX: panX }, { translateY: panY }, { scale: zoom }],
+          }}
+        >
+          {imageUris.map((uri, i) => (
+            <Image
+              key={`${chapterNum}-${i}`}
+              source={{ uri }}
+              style={{ width: SCREEN.width }}
+              resizeMode="contain"
+            />
+          ))}
         </View>
       </ScrollView>
 
@@ -365,8 +326,6 @@ const s = StyleSheet.create({
   loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
   loadingText: { marginTop: 12, fontSize: 14, fontWeight: "500" },
   scroll: { flex: 1 },
-  imageContainer: { alignItems: "center" },
-  imageScaler: { },
   topBar: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
     paddingTop: 50, paddingHorizontal: 12, paddingBottom: 10, borderBottomWidth: 1,
