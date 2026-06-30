@@ -61,7 +61,7 @@ export class MgekoAdapter extends BaseSiteAdapter {
     const reader = findById(root, "chapter-reader");
     if (!reader) return [];
 
-    const imgs = extractImages(reader, false);
+    const imgs = extractImages(reader, true);
     return imgs.filter((u) => u.includes("imgsrv4.com") && !this._isCreditsImage(u));
   }
 

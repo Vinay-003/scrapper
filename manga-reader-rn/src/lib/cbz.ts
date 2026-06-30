@@ -77,24 +77,36 @@ export async function saveChapterImages(
       console.log(`[CBZ] ${padded}.${ext}: ${imgW}x${imgH}`);
 
       if (imgH > 0 && imgW > 0 && imgH > MAX_SEGMENT_HEIGHT) {
-        const segmentCount = Math.ceil(imgH / MAX_SEGMENT_HEIGHT);
+        // Use renderAsync to get actual bitmap dimensions (may differ from Image.getSize)
+        const probeCtx = ImageManipulator.manipulate(file.uri);
+        const probeRef = await probeCtx.renderAsync();
+        const actualH = probeRef.height;
+        const actualW = probeRef.width;
+
+        console.log(`[CBZ] actual bitmap: ${actualW}x${actualH} (getSize said ${imgW}x${imgH})`);
+
+        const segmentCount = Math.ceil(actualH / MAX_SEGMENT_HEIGHT);
         console.log(`[CBZ] splitting into ${segmentCount} segments`);
         for (let s = 0; s < segmentCount; s++) {
           const originY = s * MAX_SEGMENT_HEIGHT;
-          const isLast = s === segmentCount - 1;
-          const segH = isLast ? imgH - originY - 2 : Math.min(MAX_SEGMENT_HEIGHT, imgH - originY);
-          if (segH <= 0) continue;
+          const segH = Math.min(MAX_SEGMENT_HEIGHT, actualH - originY);
+          if (segH <= 0) break;
           const segName = s === 0 ? `${padded}.${ext}` : `${padded}_s${s + 1}.${ext}`;
 
-          const segCtx = ImageManipulator.manipulate(file.uri);
-          segCtx.crop({ originX: 0, originY, width: imgW, height: segH });
-          const segRef = await segCtx.renderAsync();
-          const segResult = await segRef.saveAsync({ compress: 1 });
+          try {
+            const segCtx = ImageManipulator.manipulate(file.uri);
+            segCtx.crop({ originX: 0, originY, width: actualW, height: segH });
+            const segRef = await segCtx.renderAsync();
+            const segResult = await segRef.saveAsync({ compress: 1 });
 
-          const segFile = new File(chDir, segName);
-          const savedFile = new File(segResult.uri);
-          segFile.write(await savedFile.bytes());
-          console.log(`[CBZ] saved segment: ${segName} (${segResult.width}x${segResult.height})`);
+            const segFile = new File(chDir, segName);
+            const savedFile = new File(segResult.uri);
+            segFile.write(await savedFile.bytes());
+            console.log(`[CBZ] saved segment: ${segName} (${segResult.width}x${segResult.height})`);
+          } catch (segErr: any) {
+            console.log(`[CBZ] segment ${s + 1} failed: ${segErr.message}`);
+            break;
+          }
         }
       }
     } catch (e: any) {
