@@ -1,8 +1,18 @@
 import { File, Directory, Paths } from "expo-file-system/next";
-import { Platform } from "react-native";
+import { Platform, Image } from "react-native";
 import { ImageManipulator } from "expo-image-manipulator";
 
 const MAX_SEGMENT_HEIGHT = 2000;
+
+function getSizeAsync(uri: string): Promise<{ w: number; h: number }> {
+  return new Promise((resolve) => {
+    Image.getSize(
+      uri,
+      (w, h) => resolve({ w, h }),
+      () => resolve({ w: 0, h: 0 })
+    );
+  });
+}
 
 export function getChapterDir(slug: string, chapterNumber: number): Directory {
   const mangaDir = new Directory(Paths.document, "manga");
@@ -63,29 +73,30 @@ export async function saveChapterImages(
     file.write(images[i].data);
 
     try {
-      const ctx = ImageManipulator.manipulate(file.uri);
-      const ref = await ctx.renderAsync();
-      const imgH = ref.height;
+      const { w: imgW, h: imgH } = await getSizeAsync(file.uri);
+      console.log(`[CBZ] ${padded}.${ext}: ${imgW}x${imgH}`);
 
-      if (imgH > MAX_SEGMENT_HEIGHT) {
+      if (imgH > 0 && imgW > 0 && imgH > MAX_SEGMENT_HEIGHT) {
         const segmentCount = Math.ceil(imgH / MAX_SEGMENT_HEIGHT);
+        console.log(`[CBZ] splitting into ${segmentCount} segments`);
         for (let s = 0; s < segmentCount; s++) {
           const originY = s * MAX_SEGMENT_HEIGHT;
           const segH = Math.min(MAX_SEGMENT_HEIGHT, imgH - originY);
           const segName = s === 0 ? `${padded}.${ext}` : `${padded}_s${s + 1}.${ext}`;
 
           const segCtx = ImageManipulator.manipulate(file.uri);
-          segCtx.crop({ originX: 0, originY, width: ref.width, height: segH });
+          segCtx.crop({ originX: 0, originY, width: imgW, height: segH });
           const segRef = await segCtx.renderAsync();
           const segResult = await segRef.saveAsync({ compress: 1 });
 
           const segFile = new File(chDir, segName);
           const savedFile = new File(segResult.uri);
           segFile.write(await savedFile.bytes());
+          console.log(`[CBZ] saved segment: ${segName} (${segResult.width}x${segResult.height})`);
         }
       }
-    } catch (e) {
-      console.log(`[CBZ] segmentation failed for ${padded}.${ext}: ${e}`);
+    } catch (e: any) {
+      console.log(`[CBZ] segmentation failed for ${padded}.${ext}: ${e.message}`);
     }
   }
 
