@@ -81,7 +81,9 @@ export async function saveChapterImages(
         console.log(`[CBZ] splitting into ${segmentCount} segments`);
         for (let s = 0; s < segmentCount; s++) {
           const originY = s * MAX_SEGMENT_HEIGHT;
-          const segH = Math.min(MAX_SEGMENT_HEIGHT, imgH - originY);
+          const isLast = s === segmentCount - 1;
+          const segH = isLast ? imgH - originY - 2 : Math.min(MAX_SEGMENT_HEIGHT, imgH - originY);
+          if (segH <= 0) continue;
           const segName = s === 0 ? `${padded}.${ext}` : `${padded}_s${s + 1}.${ext}`;
 
           const segCtx = ImageManipulator.manipulate(file.uri);
