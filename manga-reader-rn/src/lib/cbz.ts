@@ -27,7 +27,17 @@ export async function getImageListFromChapter(
   const imageFiles = entries
     .filter((e) => e instanceof File && /\.(jpe?g|png|webp|gif)$/i.test(e.name) && !e.name.startsWith("_"))
     .map((e) => e as File)
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    .sort((a, b) => {
+      const parseName = (name: string) => {
+        const m = name.match(/^(\d+)(?:_s(\d+))?/);
+        if (!m) return [0, 0];
+        return [parseInt(m[1]), parseInt(m[2] || "1")];
+      };
+      const [aBase, aSeg] = parseName(a.name);
+      const [bBase, bSeg] = parseName(b.name);
+      if (aBase !== bBase) return aBase - bBase;
+      return aSeg - bSeg;
+    });
 
   return {
     names: imageFiles.map((f) => f.name),

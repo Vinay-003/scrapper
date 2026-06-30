@@ -6,7 +6,7 @@ import {
   Image,
   TouchableOpacity,
   StyleSheet,
-  Dimensions,
+  useWindowDimensions,
   ActivityIndicator,
   StatusBar,
   GestureResponderEvent,
@@ -16,7 +16,6 @@ import { t, isDark } from "../src/lib/theme";
 import { saveRecentlyRead } from "../src/lib/storage";
 import { getChapterImages } from "../src/lib/manga";
 
-const SCREEN = Dimensions.get("window");
 const ZOOM_STEPS = [5, 10, 25, 50];
 
 function dist(a: { pageX: number; pageY: number }, b: { pageX: number; pageY: number }) {
@@ -26,6 +25,7 @@ function dist(a: { pageX: number; pageY: number }, b: { pageX: number; pageY: nu
 export default function ReaderScreen() {
   const { slug, chapter } = useLocalSearchParams<{ slug: string; chapter: string }>();
   const router = useRouter();
+  const { width: SCREEN_WIDTH } = useWindowDimensions();
   const [imageUris, setImageUris] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [showUI, setShowUI] = useState(true);
@@ -295,7 +295,7 @@ export default function ReaderScreen() {
             <Image
               key={`${chapterNum}-${i}`}
               source={{ uri }}
-              style={{ width: SCREEN.width, minHeight: 100 }}
+              style={{ width: SCREEN_WIDTH }}
               resizeMode="contain"
             />
           ))}
