@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -21,30 +21,6 @@ const ZOOM_STEPS = [5, 10, 25, 50];
 
 function dist(a: { pageX: number; pageY: number }, b: { pageX: number; pageY: number }) {
   return Math.sqrt((a.pageX - b.pageX) ** 2 + (a.pageY - b.pageY) ** 2);
-}
-
-function MeasuredImage({ uri, index }: { uri: string; index: number }) {
-  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
-
-  return (
-    <Image
-      key={`img-${index}`}
-      source={{ uri }}
-      style={
-        size
-          ? { width: SCREEN.width, height: (SCREEN.width / size.w) * size.h }
-          : { width: SCREEN.width, minHeight: 100 }
-      }
-      resizeMode="contain"
-      onLoad={(_e) => {
-        const imgW = _e.nativeEvent.source?.width;
-        const imgH = _e.nativeEvent.source?.height;
-        if (imgW && imgH && !size) {
-          setSize({ w: imgW, h: imgH });
-        }
-      }}
-    />
-  );
 }
 
 export default function ReaderScreen() {
@@ -316,7 +292,12 @@ export default function ReaderScreen() {
           }}
         >
           {imageUris.map((uri, i) => (
-            <MeasuredImage key={`${chapterNum}-${i}`} uri={uri} index={i} />
+            <Image
+              key={`${chapterNum}-${i}`}
+              source={{ uri }}
+              style={{ width: SCREEN.width, minHeight: 100 }}
+              resizeMode="contain"
+            />
           ))}
         </View>
       </ScrollView>
