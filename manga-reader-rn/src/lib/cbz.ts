@@ -1,18 +1,8 @@
 import { File, Directory, Paths } from "expo-file-system/next";
-import { Platform, Image } from "react-native";
+import { Platform } from "react-native";
 import { ImageManipulator } from "expo-image-manipulator";
 
 const MAX_SEGMENT_HEIGHT = 2000;
-
-function getSizeAsync(uri: string): Promise<{ w: number; h: number }> {
-  return new Promise((resolve) => {
-    Image.getSize(
-      uri,
-      (w, h) => resolve({ w, h }),
-      () => resolve({ w: 0, h: 0 })
-    );
-  });
-}
 
 export function getChapterDir(slug: string, chapterNumber: number): Directory {
   const mangaDir = new Directory(Paths.document, "manga");
@@ -73,20 +63,21 @@ export async function saveChapterImages(
     file.write(images[i].data);
 
     try {
-      const { w: imgW, h: imgH } = await getSizeAsync(file.uri);
-      console.log(`[CBZ] ${padded}.${ext}: ${imgW}x${imgH}`);
+      // Render full image to get actual bitmap dimensions
+      const fullCtx = ImageManipulator.manipulate(file.uri);
+      const fullRef = await fullCtx.renderAsync();
+      const actualW = fullRef.width;
+      const actualH = fullRef.height;
+      console.log(`[CBZ] ${padded}.${ext}: actual ${actualW}x${actualH}`);
 
-      if (imgH > 0 && imgW > 0 && imgH > MAX_SEGMENT_HEIGHT) {
-        // Use renderAsync to get actual bitmap dimensions (may differ from Image.getSize)
-        const probeCtx = ImageManipulator.manipulate(file.uri);
-        const probeRef = await probeCtx.renderAsync();
-        const actualH = probeRef.height;
-        const actualW = probeRef.width;
-
-        console.log(`[CBZ] actual bitmap: ${actualW}x${actualH} (getSize said ${imgW}x${imgH})`);
+      if (actualH > MAX_SEGMENT_HEIGHT) {
+        // Save fully decoded image as temp file (bakes EXIF rotation, consistent dims)
+        const fullResult = await fullRef.saveAsync({ compress: 1 });
+        const tempUri = fullResult.uri;
 
         const segmentCount = Math.ceil(actualH / MAX_SEGMENT_HEIGHT);
         console.log(`[CBZ] splitting into ${segmentCount} segments`);
+
         for (let s = 0; s < segmentCount; s++) {
           const originY = s * MAX_SEGMENT_HEIGHT;
           const segH = Math.min(MAX_SEGMENT_HEIGHT, actualH - originY);
@@ -94,7 +85,7 @@ export async function saveChapterImages(
           const segName = s === 0 ? `${padded}.${ext}` : `${padded}_s${s + 1}.${ext}`;
 
           try {
-            const segCtx = ImageManipulator.manipulate(file.uri);
+            const segCtx = ImageManipulator.manipulate(tempUri);
             segCtx.crop({ originX: 0, originY, width: actualW, height: segH });
             const segRef = await segCtx.renderAsync();
             const segResult = await segRef.saveAsync({ compress: 1 });
