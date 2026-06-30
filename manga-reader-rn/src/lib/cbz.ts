@@ -1,4 +1,11 @@
 import { File, Directory, Paths } from "expo-file-system/next";
+import { documentDirectory } from "expo-file-system/legacy";
+
+const DOC_DIR = documentDirectory!;
+
+function buildImageUri(slug: string, chapterNumber: number, imageName: string): string {
+  return `${DOC_DIR}manga/${slug}/ch${chapterNumber}/${imageName}`;
+}
 
 /**
  * Get the directory for a chapter's images.
@@ -35,11 +42,10 @@ export async function getImageListFromChapter(
 
 /**
  * Get the URI for a chapter image (ready for <Image source={{uri}}>)
+ * Uses legacy expo-file-system documentDirectory for compatible file:// URIs.
  */
 export function getImageUri(slug: string, chapterNumber: number, imageName: string): string {
-  const chDir = getChapterDir(slug, chapterNumber);
-  const file = new File(chDir, imageName);
-  return file.uri;
+  return buildImageUri(slug, chapterNumber, imageName);
 }
 
 /**
