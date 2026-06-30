@@ -1,9 +1,9 @@
 import { File, Directory, Paths } from "expo-file-system/next";
 import { Platform } from "react-native";
+import { ImageManipulator } from "expo-image-manipulator";
 
-/**
- * Get the directory for a chapter's images.
- */
+const MAX_SEGMENT_HEIGHT = 2000;
+
 export function getChapterDir(slug: string, chapterNumber: number): Directory {
   const mangaDir = new Directory(Paths.document, "manga");
   const slugDir = new Directory(mangaDir, slug);
@@ -11,22 +11,11 @@ export function getChapterDir(slug: string, chapterNumber: number): Directory {
   return chDir;
 }
 
-/**
- * Get a URI suitable for React Native <Image>.
- * On Android, use contentUri (needed for scoped storage).
- * On iOS, use file uri.
- */
-function getImageFileUri(file: File): string {
-  if (Platform.OS === "android") {
-    return file.contentUri;
-  }
+export function getCompatUri(file: File): string {
+  if (Platform.OS === "android") return file.contentUri;
   return file.uri;
 }
 
-/**
- * Read image list from a chapter directory.
- * Returns { names, uris } — names for display, uris for <Image>.
- */
 export async function getImageListFromChapter(
   slug: string,
   chapterNumber: number
@@ -36,32 +25,22 @@ export async function getImageListFromChapter(
 
   const entries = chDir.list();
   const imageFiles = entries
-    .filter(
-      (e) =>
-        e instanceof File &&
-        /\.(jpe?g|png|webp|gif)$/i.test(e.name)
-    )
+    .filter((e) => e instanceof File && /\.(jpe?g|png|webp|gif)$/i.test(e.name) && !e.name.startsWith("_"))
     .map((e) => e as File)
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 
   return {
     names: imageFiles.map((f) => f.name),
-    uris: imageFiles.map((f) => getImageFileUri(f)),
+    uris: imageFiles.map((f) => getCompatUri(f)),
   };
 }
 
-/**
- * Get the URI for a chapter image.
- */
 export function getImageUri(slug: string, chapterNumber: number, imageName: string): string {
   const chDir = getChapterDir(slug, chapterNumber);
   const file = new File(chDir, imageName);
-  return getImageFileUri(file);
+  return getCompatUri(file);
 }
 
-/**
- * Save downloaded images to a chapter directory.
- */
 export async function saveChapterImages(
   slug: string,
   chapterNumber: number,
@@ -79,38 +58,54 @@ export async function saveChapterImages(
   for (let i = 0; i < images.length; i++) {
     const ext = getExtension(images[i].name);
     const padded = String(i + 1).padStart(4, "0");
+
     const file = new File(chDir, `${padded}.${ext}`);
     file.write(images[i].data);
+
+    try {
+      const ctx = ImageManipulator.manipulate(file.uri);
+      const ref = await ctx.renderAsync();
+      const imgH = ref.height;
+
+      if (imgH > MAX_SEGMENT_HEIGHT) {
+        const segmentCount = Math.ceil(imgH / MAX_SEGMENT_HEIGHT);
+        for (let s = 0; s < segmentCount; s++) {
+          const originY = s * MAX_SEGMENT_HEIGHT;
+          const segH = Math.min(MAX_SEGMENT_HEIGHT, imgH - originY);
+          const segName = s === 0 ? `${padded}.${ext}` : `${padded}_s${s + 1}.${ext}`;
+
+          const segCtx = ImageManipulator.manipulate(file.uri);
+          segCtx.crop({ originX: 0, originY, width: ref.width, height: segH });
+          const segRef = await segCtx.renderAsync();
+          const segResult = await segRef.saveAsync({ compress: 1 });
+
+          const segFile = new File(chDir, segName);
+          const savedFile = new File(segResult.uri);
+          segFile.write(await savedFile.bytes());
+        }
+      }
+    } catch (e) {
+      console.log(`[CBZ] segmentation failed for ${padded}.${ext}: ${e}`);
+    }
   }
 
   return chDir.uri;
 }
 
-/**
- * Check if a chapter exists on disk.
- */
 export function chapterExists(slug: string, chapterNumber: number): boolean {
   const chDir = getChapterDir(slug, chapterNumber);
   if (!chDir.exists) return false;
   const entries = chDir.list();
   return entries.some(
-    (e) =>
-      e instanceof File &&
-      /\.(jpe?g|png|webp|gif)$/i.test(e.name)
+    (e) => e instanceof File && /\.(jpe?g|png|webp|gif)$/i.test(e.name) && !e.name.startsWith("_")
   );
 }
 
-/**
- * Delete a chapter directory.
- */
 export function deleteChapterDir(slug: string, chapterNumber: number): void {
   const chDir = getChapterDir(slug, chapterNumber);
   if (chDir.exists) chDir.delete();
 }
 
-/**
- * Delete all chapter directories for a manga.
- */
 export function deleteMangaDir(slug: string): void {
   const mangaDir = new Directory(Paths.document, "manga");
   if (!mangaDir.exists) return;

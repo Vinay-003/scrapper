@@ -18,7 +18,6 @@ import { getChapterImages } from "../src/lib/manga";
 
 const SCREEN = Dimensions.get("window");
 const ZOOM_STEPS = [5, 10, 25, 50];
-const LAZY_BUFFER = 3;
 
 function dist(a: { pageX: number; pageY: number }, b: { pageX: number; pageY: number }) {
   return Math.sqrt((a.pageX - b.pageX) ** 2 + (a.pageY - b.pageY) ** 2);
@@ -36,7 +35,6 @@ export default function ReaderScreen() {
   const [zoomStep, setZoomStep] = useState(5);
   const [showStepPicker, setShowStepPicker] = useState(false);
   const [progressPct, setProgressPct] = useState(0);
-  const [visibleRange, setVisibleRange] = useState({ start: 0, end: LAZY_BUFFER * 2 });
   const colors = t();
   const chapterNum = parseFloat(chapter!);
 
@@ -44,7 +42,6 @@ export default function ReaderScreen() {
   const scrollYRef = useRef(0);
   const progressRef = useRef(0);
   const lastProgressUpdate = useRef(0);
-  const imageHeights = useRef<number[]>([]);
   const gestureRef = useRef({
     initialDist: 0,
     baseZoom: 1,
@@ -69,37 +66,22 @@ export default function ReaderScreen() {
       setPanX(0);
       setPanY(0);
       setProgressPct(0);
-      setVisibleRange({ start: 0, end: LAZY_BUFFER * 2 });
       progressRef.current = 0;
       lastProgressUpdate.current = 0;
       scrollYRef.current = 0;
       overshootRef.current = 0;
       gestureRef.current.mode = "none";
       gestureActiveRef.current = false;
-      imageHeights.current = [];
 
       const data = await getChapterImages(slug!, chapterNum);
       if (data) {
         setImageUris(data.uris);
-        imageHeights.current = new Array(data.uris.length).fill(0);
+        console.log(`[READER] loaded ${data.uris.length} images`);
       }
       setLoading(false);
       saveRecentlyRead(slug!, chapterNum);
     })();
   }, [slug, chapterNum]);
-
-  const updateVisibleRange = (scrollY: number) => {
-    const avgH = imageHeights.current.length > 0
-      ? imageHeights.current.reduce((a, b) => a + b, 0) / imageHeights.current.filter(h => h > 0).length || SCREEN.width * 1.5
-      : SCREEN.width * 1.5;
-    const idx = Math.floor(scrollY / avgH);
-    const start = Math.max(0, idx - LAZY_BUFFER);
-    const end = Math.min(imageUris.length, idx + LAZY_BUFFER + 1);
-    setVisibleRange(prev => {
-      if (prev.start === start && prev.end === end) return prev;
-      return { start, end };
-    });
-  };
 
   const navigateChapter = (delta: number) => {
     router.replace({ pathname: "/reader", params: { slug: slug!, chapter: chapterNum + delta } });
@@ -220,9 +202,6 @@ export default function ReaderScreen() {
   const handleScroll = (e: any) => {
     scrollYRef.current = e.nativeEvent.contentOffset.y;
     const now = Date.now();
-
-    updateVisibleRange(e.nativeEvent.contentOffset.y);
-
     if (now - lastProgressUpdate.current < 200) return;
     lastProgressUpdate.current = now;
     const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
@@ -233,10 +212,6 @@ export default function ReaderScreen() {
         setProgressPct(pct);
       }
     }
-  };
-
-  const onImageLayout = (index: number, height: number) => {
-    imageHeights.current[index] = height;
   };
 
   const zoomPct = Math.round(zoom * 100);
@@ -316,22 +291,14 @@ export default function ReaderScreen() {
             transform: [{ translateX: panX }, { translateY: panY }, { scale: zoom }],
           }}
         >
-          {imageUris.map((uri, i) => {
-            const isVisible = i >= visibleRange.start && i <= visibleRange.end;
-            return (
-              <Image
-                key={`${chapterNum}-${i}`}
-                source={isVisible ? { uri } : undefined}
-                style={{ width: SCREEN.width, height: isVisible ? undefined : SCREEN.width * 1.5 }}
-                resizeMode="contain"
-                onLoad={(e: any) => {
-                  if (e.source?.height) {
-                    onImageLayout(i, (SCREEN.width * e.source.height) / e.source.width);
-                  }
-                }}
-              />
-            );
-          })}
+          {imageUris.map((uri, i) => (
+            <Image
+              key={`${chapterNum}-${i}`}
+              source={{ uri }}
+              style={{ width: SCREEN.width, minHeight: 100 }}
+              resizeMode="contain"
+            />
+          ))}
         </View>
       </ScrollView>
 
