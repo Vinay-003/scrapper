@@ -129,7 +129,7 @@ export async function getMangaDetail(slug: string): Promise<MangaDetail | null> 
 export async function getChapterImages(
   slug: string,
   chapterNumber: number
-): Promise<{ images: string[] } | null> {
+): Promise<{ names: string[]; uris: string[] } | null> {
   if (!chapterExists(slug, chapterNumber)) return null;
   return getImageListFromChapter(slug, chapterNumber);
 }

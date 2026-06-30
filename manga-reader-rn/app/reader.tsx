@@ -14,7 +14,7 @@ import {
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { t, isDark } from "../src/lib/theme";
 import { saveRecentlyRead } from "../src/lib/storage";
-import { getChapterImages, getImageFileUri } from "../src/lib/manga";
+import { getChapterImages } from "../src/lib/manga";
 
 const SCREEN = Dimensions.get("window");
 const ZOOM_STEPS = [5, 10, 25, 50];
@@ -80,13 +80,8 @@ export default function ReaderScreen() {
 
       const data = await getChapterImages(slug!, chapterNum);
       if (data) {
-        const uris: string[] = [];
-        for (const name of data.images) {
-          const uri = getImageFileUri(slug!, chapterNum, name);
-          if (uri) uris.push(uri);
-        }
-        setImageUris(uris);
-        imageHeights.current = new Array(uris.length).fill(0);
+        setImageUris(data.uris);
+        imageHeights.current = new Array(data.uris.length).fill(0);
       }
       setLoading(false);
       saveRecentlyRead(slug!, chapterNum);

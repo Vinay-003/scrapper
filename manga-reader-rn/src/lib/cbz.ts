@@ -1,11 +1,5 @@
 import { File, Directory, Paths } from "expo-file-system/next";
-import { documentDirectory } from "expo-file-system/legacy";
-
-const DOC_DIR = documentDirectory!;
-
-function buildImageUri(slug: string, chapterNumber: number, imageName: string): string {
-  return `${DOC_DIR}manga/${slug}/ch${chapterNumber}/${imageName}`;
-}
+import { Platform } from "react-native";
 
 /**
  * Get the directory for a chapter's images.
@@ -18,14 +12,27 @@ export function getChapterDir(slug: string, chapterNumber: number): Directory {
 }
 
 /**
+ * Get a URI suitable for React Native <Image>.
+ * On Android, use contentUri (needed for scoped storage).
+ * On iOS, use file uri.
+ */
+function getImageFileUri(file: File): string {
+  if (Platform.OS === "android") {
+    return file.contentUri;
+  }
+  return file.uri;
+}
+
+/**
  * Read image list from a chapter directory.
+ * Returns { names, uris } — names for display, uris for <Image>.
  */
 export async function getImageListFromChapter(
   slug: string,
   chapterNumber: number
-): Promise<{ images: string[] }> {
+): Promise<{ names: string[]; uris: string[] }> {
   const chDir = getChapterDir(slug, chapterNumber);
-  if (!chDir.exists) return { images: [] };
+  if (!chDir.exists) return { names: [], uris: [] };
 
   const entries = chDir.list();
   const imageFiles = entries
@@ -34,23 +41,26 @@ export async function getImageListFromChapter(
         e instanceof File &&
         /\.(jpe?g|png|webp|gif)$/i.test(e.name)
     )
-    .map((e) => (e as File).name)
-    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    .map((e) => e as File)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 
-  return { images: imageFiles };
+  return {
+    names: imageFiles.map((f) => f.name),
+    uris: imageFiles.map((f) => getImageFileUri(f)),
+  };
 }
 
 /**
- * Get the URI for a chapter image (ready for <Image source={{uri}}>)
- * Uses legacy expo-file-system documentDirectory for compatible file:// URIs.
+ * Get the URI for a chapter image.
  */
 export function getImageUri(slug: string, chapterNumber: number, imageName: string): string {
-  return buildImageUri(slug, chapterNumber, imageName);
+  const chDir = getChapterDir(slug, chapterNumber);
+  const file = new File(chDir, imageName);
+  return getImageFileUri(file);
 }
 
 /**
  * Save downloaded images to a chapter directory.
- * Images are saved as raw files — no segmentation or manipulation.
  */
 export async function saveChapterImages(
   slug: string,
